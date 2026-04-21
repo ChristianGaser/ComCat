@@ -211,11 +211,12 @@ SOFTWARE.
   end
   
   if nargout > 3
-    nd = size(delta_hat,1);
-    delta = zeros(nd,dim(1));
-    for i=1:nd
-      delta(i,ind_mask) = delta_hat(i,:); 
-    end
+      nd = size(delta_hat,1);
+      delta_hat_masked = delta_hat;
+      delta_hat = zeros(nd,dim(1));
+      for i=1:nd
+        delta_hat(i,ind_mask) = delta_hat_masked(i,:); 
+      end
   end
   
   % transpose result if Y was transposed
