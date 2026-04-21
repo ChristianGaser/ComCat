@@ -150,8 +150,7 @@ SOFTWARE.
     
   % Standardization Model
   grand_mean = (n_batches/n_array)*B_hat(ind_batch,:);
-%  grand_mean = mean(X(:,[ind_batch ind_nuisance])*B_hat([ind_batch],:)); % orig
-grand_mean(:)=0;
+  grand_mean = mean(X(:,[ind_batch ind_nuisance])*B_hat([ind_batch],:)); % orig
   std_pooled = sqrt(mean((Y-(X*B_hat)').^2,2));
   stand_mean = grand_mean'*ones(1,n_array);
   
@@ -160,7 +159,7 @@ grand_mean(:)=0;
   std_pooled_notzero = std_pooled;
   std_pooled_notzero(wh) = [];
   std_pooled(wh) = median(std_pooled_notzero);
-std_pooled(:)=1;
+
   stand_mean = stand_mean + (X(:,ind_preserve)*B_hat(ind_preserve,:))';
   s_data0 = (Y-stand_mean)./(std_pooled*ones(1,n_array));
   clear Y

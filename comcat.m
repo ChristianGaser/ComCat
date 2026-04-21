@@ -167,7 +167,6 @@ SOFTWARE.
       delta_hat(i,:) = var(Y(:,indices),[],2)';
     end
   end
-  k = 1;
   for i=n_batch+1:n_batch+n_Z
     varY = var(Y,[],2)';
     if mean_only
@@ -175,7 +174,6 @@ SOFTWARE.
     else
       delta_hat(i,:) = varY;
     end
-    k = k + 1;
   end
   
   if verbose, fprintf('[ComCAT] Adjusting the Data\n'); end
