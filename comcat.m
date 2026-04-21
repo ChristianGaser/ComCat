@@ -124,8 +124,8 @@ SOFTWARE.
     if nn==(n_batch+ind_nuisance+1) 
       error('Error. The covariate is confounded with batch. Remove the covariate and rerun ComCAT.')
     end
-    if nn>(n_batch+ind_nuisance+1)
-      temp = XZ(:,(n_batch+ind_nuisance+1):nn);
+    if nn>(n_batch+n_Z+1)
+      temp = XZ(:,(n_batch+n_Z+1):nn);      
       if rank(temp) < size(temp,2)
         warning('Error. The covariates are confounded. Please remove one or more of the covariates so the design is not confounded.')
       else 
