@@ -43,7 +43,17 @@ SOFTWARE.
   elseif ~isempty(X)
     n_array = size(X,1);
   end
-  
+
+  % we need an intercept if batch is not defined and have to enable mean_only
+  if isempty(batch)
+    if isempty(Z)
+      Y_harmonized = Y;
+      return
+    end
+    batch = ones(n_array,1);
+    mean_only = 1;
+  end
+    
   n_Z = size(Z,2);
   n_X = size(X,2);
   
@@ -58,14 +68,14 @@ SOFTWARE.
   % we have to save memory
   Y = single(Y);
   
-  % use only those data entries where std is >0 and finite to skip background
+  % use only those data entries where std is > 0 and finite to skip background
   % and masked areas
   dim = size(Y);
   sd0 = std(Y,[],2);
   avg = mean(Y,2);
   
-  % we check that SD exceed minimum value
-  ind_mask = sd0 > max(avg(:))/100 & isfinite(sd0);
+  % we check that SD exceeds 0
+  ind_mask = sd0 > 0 & isfinite(sd0);
   
   Y = Y(ind_mask,:);
   ind_NaN = isnan(sd0);
@@ -79,16 +89,6 @@ SOFTWARE.
     end
     Z = cell2mat(tmp_nuisance);
     n_Z = size(Z,2);
-  end
-  
-  % we need an intercept if batch is not defined and have to enable mean_only
-  if isempty(batch)
-    if isempty(Z)
-      Y_harmonized = Y;
-      return
-    end
-    batch = ones(n_array,1);
-    mean_only = 1;
   end
   
   levels = unique(batch);
