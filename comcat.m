@@ -31,7 +31,7 @@ SOFTWARE.
   if nargin < 4, error('Syntax: Y_harmonized = comcat(Y, batch, nuisance, preserve, mean_only, poly_degree, verbose);'); end
   
   % transpose if necessary
-  [m,n] = size(batch);    if m<n, batch = batch'; end
+  [m,n] = size(batch); if m<n, batch = batch'; end
   [m,n] = size(Z); if m<n, Z = Z'; end
   [m,n] = size(X); if m<n, X = X'; end
   
@@ -81,13 +81,14 @@ SOFTWARE.
     n_Z = size(Z,2);
   end
   
-  % we need an intercept if batch is not defined
+  % we need an intercept if batch is not defined and have to enable mean_only
   if isempty(batch)
     if isempty(Z)
       Y_harmonized = Y;
       return
     end
     batch = ones(n_array,1);
+    mean_only = 1;
   end
   
   levels = unique(batch);
