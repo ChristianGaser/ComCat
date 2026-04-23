@@ -38,17 +38,20 @@ ref_batch            : label of a site to use as reference (its data is left unt
                        all other sites are harmonized relative to it). Default None.
 return_estimates     : if True, a 5th element (dict) with all fitted parameters is
                        returned; pass it to comcat_from_training() for new data.
-smooth_terms         : list of 0-based column indices in `nuisance` to model with
-                       B-spline GAMs instead of polynomial expansion. E.g. [0] models
-                       the first nuisance variable nonlinearly. Requires statsmodels.
-                       Default None (all nuisance use polynomial expansion).
+smooth_terms         : which nuisance columns to model with B-spline GAM.
+                       • 'all' (default) — apply GAM to every nuisance column
+                       • list of 0-based indices, e.g. [0, 2] — GAM for those columns,
+                         polynomial for the rest
+                       • None — polynomial expansion for all columns (no GAM)
+                       Requires statsmodels when set to 'all' or a non-empty list.
+                       Falls back to polynomial silently if statsmodels is missing.
 smooth_term_bounds   : boundary knots for each smooth term.
                        • None  — infer bounds from training data (safe for training only)
                        • (lo, hi) — same bounds for all smooth terms
                        • [(lo0,hi0), (lo1,hi1), ...] — one pair per entry in smooth_terms
                        For apply-to-new-data workflows, always specify explicit bounds
                        that cover the full range of training AND test data.
-gam_df               : int, B-spline basis dimension per smooth term (default 10).
+gam_df               : int, B-spline basis dimension per smooth term (default 6).
                        Higher values capture finer nonlinearities but risk overfitting.
 
 GAM smoothness recommendations
@@ -67,8 +70,8 @@ Typical `gam_df` choices by covariate type:
 | General rule          | max(5, n // 30)    | Cap at 15 for any sample size      |
 
 Practical guidelines:
-- Start with `gam_df=6` for most neuroimaging covariates and increase only
-  if residuals show clear non-linear patterns.
+- The default `gam_df=6` is appropriate for most neuroimaging covariates.
+  Increase only if residuals show clear remaining non-linear patterns.
 - Values above 15 rarely help and inflate the design matrix (slows pinv).
 - For small samples (n < 100): keep `gam_df ≤ 6` to avoid near-rank-deficiency.
 - Always set `smooth_term_bounds` explicitly in train/test workflows so the
@@ -97,9 +100,9 @@ def comcat(
     verbose: bool = False,
     ref_batch=None,
     return_estimates: bool = False,
-    smooth_terms: list[int] | None = None,
+    smooth_terms: list[int] | str | None = 'all',
     smooth_term_bounds=None,
-    gam_df: int = 10,
+    gam_df: int = 6,
 ):
     """ComCAT harmonization for sites and nuisance parameters."""
 
@@ -146,6 +149,10 @@ def comcat(
 
     n_Z = nuisance.shape[1]
     n_X = preserve.shape[1]
+
+    # Resolve 'all' sentinel: apply GAM to every nuisance column
+    if smooth_terms == 'all':
+        smooth_terms = list(range(n_Z)) if n_Z > 0 else None
 
     # Y must be (n_features, n_subjects)
     transp = False
