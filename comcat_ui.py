@@ -130,6 +130,8 @@ def _build_subfolder(
     n_preserve: int,
     mean_only: bool,
     poly_degree: int,
+    use_gam: bool = True,
+    gam_df: int = 6,
 ) -> str:
     if n_sites > 1 and n_nuisance == 0:
         sf = 'combat'
@@ -142,10 +144,11 @@ def _build_subfolder(
     if mean_only:
         sf += '_meanonly'
     if n_nuisance > 0:
-        if poly_degree > 1:
-            sf += f'_nuisance{n_nuisance}_poly{poly_degree}'
-        else:
-            sf += f'_nuisance{n_nuisance}'
+        sf += f'_nuisance{n_nuisance}'
+        if use_gam:
+            sf += f'_gam{gam_df}'
+        elif poly_degree > 1:
+            sf += f'_poly{poly_degree}'
     return sf
 
 
@@ -168,6 +171,9 @@ def comcat_ui(
     subfolder: str | None = None,
     save_estimates: bool = False,
     verbose: bool = True,
+    smooth_terms: list[int] | str | None = 'all',
+    smooth_term_bounds=None,
+    gam_df: int = 6,
 ):
     """
     Run ComCAT on a list of image/data files and save harmonized results.
@@ -180,10 +186,15 @@ def comcat_ui(
     nuisance      : 2-D array (n_subjects × n_nuisance) to remove
     preserve      : 2-D array (n_subjects × n_preserve) to keep
     mean_only     : adjust mean only (no variance scaling)
-    poly_degree   : polynomial degree for nuisance expansion
+    poly_degree   : polynomial degree for nuisance expansion (used when smooth_terms=None)
     subfolder     : override auto-generated subfolder name
     save_estimates: save gamma/delta LS estimates alongside data
     verbose       : print progress
+    smooth_terms  : nuisance columns to model with B-spline GAM.
+                    'all' (default) — all nuisance columns; None — polynomial only;
+                    list of 0-based indices — GAM for those, polynomial for the rest.
+    smooth_term_bounds : boundary knots; None infers from data (fine for single-dataset use).
+    gam_df        : B-spline basis dimension per smooth term (default 6).
     """
     if not files:
         raise ValueError("No input files provided.")
@@ -242,9 +253,18 @@ def comcat_ui(
               f"{np.mean(np.abs(off_diag)):.3f}")
 
     # --------------------------------------------------------- harmonize
+    # Determine whether GAM is active (for subfolder naming and log)
+    _use_gam = (
+        smooth_terms == 'all'
+        or (isinstance(smooth_terms, list) and len(smooth_terms) > 0)
+    )
+
     Y_adj, beta_hat, gamma_hat, delta_hat = comcat(
         Y, batch_coded, nuisance, preserve,
         mean_only=mean_only, poly_degree=poly_degree, verbose=verbose,
+        smooth_terms=smooth_terms,
+        smooth_term_bounds=smooth_term_bounds,
+        gam_df=gam_df,
     )
 
     # guard against extreme variance changes (factor > 10)
@@ -262,7 +282,8 @@ def comcat_ui(
     # --------------------------------------------------------- subfolder / path
     if subfolder is None:
         subfolder = _build_subfolder(
-            n_sites, n_nuisance_cols, n_preserve_cols, mean_only, poly_degree
+            n_sites, n_nuisance_cols, n_preserve_cols, mean_only, poly_degree,
+            use_gam=_use_gam, gam_df=gam_df,
         )
 
     pth = str(Path(files[0]).parent)
@@ -285,7 +306,8 @@ def comcat_ui(
             )
 
         # save log mat
-        _save_log_mat(pth, subfolder, batch, nuisance, preserve, poly_degree)
+        _save_log_mat(pth, subfolder, batch, nuisance, preserve, poly_degree,
+                      _use_gam, gam_df)
 
     elif filetype == 'mat':
         prep = 'h'
@@ -307,7 +329,8 @@ def comcat_ui(
                 if verbose:
                     print(f"Saved {dname} (multiplicative effects)")
 
-        _save_log_mat(pth, subfolder, batch, nuisance, preserve, poly_degree)
+        _save_log_mat(pth, subfolder, batch, nuisance, preserve, poly_degree,
+                      _use_gam, gam_df)
 
     else:  # txt / csv
         prep = 'h'
@@ -326,7 +349,8 @@ def comcat_ui(
                 dname = Path(pth) / f"delta{i+1:01d}{ext}"
                 np.savetxt(str(dname), delta_hat[i, :][None, :], fmt='%g')
 
-        _save_log_mat(pth, subfolder, batch, nuisance, preserve, poly_degree)
+        _save_log_mat(pth, subfolder, batch, nuisance, preserve, poly_degree,
+                      _use_gam, gam_df)
 
     if verbose:
         print()
@@ -363,7 +387,8 @@ def _save_estimates_nifti(gamma_hat, delta_hat, pth, ref_img, is_gifti: bool):
         nib.save(img, fname)
 
 
-def _save_log_mat(pth, subfolder, batch, nuisance, preserve, poly_degree):
+def _save_log_mat(pth, subfolder, batch, nuisance, preserve, poly_degree,
+                  use_gam=True, gam_df=6):
     """Save a .mat log file with ComCAT parameters (mirrors MATLAB behaviour)."""
     try:
         from scipy.io import savemat
@@ -372,6 +397,8 @@ def _save_log_mat(pth, subfolder, batch, nuisance, preserve, poly_degree):
             'nuisance':   np.array(nuisance),
             'preserve':   np.array(preserve),
             'poly_degree': int(poly_degree),
+            'use_gam':    int(use_gam),
+            'gam_df':     int(gam_df),
         }
         savemat(os.path.join(pth, subfolder + '.mat'), {'Comcat': log})
     except ImportError:
@@ -403,7 +430,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument('--mean-only', action='store_true',
                    help='Adjust mean only (no variance scaling).')
     p.add_argument('--poly-degree', type=int, default=2, metavar='N',
-                   help='Polynomial degree for nuisance expansion (default: 2).')
+                   help='Polynomial degree for nuisance expansion (used when --no-gam).')
+    p.add_argument('--no-gam', action='store_true',
+                   help='Use polynomial expansion instead of B-spline GAM for nuisance.')
+    p.add_argument('--gam-df', type=int, default=6, metavar='N',
+                   help='B-spline basis dimension per nuisance term (default: 6).')
     p.add_argument('--subfolder', default=None,
                    help='Override auto-generated output subfolder name.')
     p.add_argument('--save-estimates', action='store_true',
@@ -430,6 +461,8 @@ def main(argv=None):
         subfolder=args.subfolder,
         save_estimates=args.save_estimates,
         verbose=not args.quiet,
+        smooth_terms=None if args.no_gam else 'all',
+        gam_df=args.gam_df,
     )
 
 
