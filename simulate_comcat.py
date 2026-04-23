@@ -218,10 +218,12 @@ def simulate_comcat(
     # ---- ComCAT harmonisation — polynomial ---------------------------------
     if no_preserving:
         Y_comcat, *_ = _comcat(Y, None, Z, None,
-                               mean_only=mean_only, poly_degree=1, verbose=False)
+                               mean_only=mean_only, poly_degree=1, verbose=False,
+                               smooth_terms=None)
     else:
         Y_comcat, *_ = _comcat(Y, None, Z, X,
-                               mean_only=mean_only, poly_degree=1, verbose=False)
+                               mean_only=mean_only, poly_degree=1, verbose=False,
+                               smooth_terms=None)
 
     # ---- ComCAT harmonisation — GAM (B-splines for every nuisance column) --
     Y_comcat_gam = None

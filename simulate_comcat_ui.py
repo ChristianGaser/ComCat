@@ -35,7 +35,7 @@ from simulate_comcat import simulate_comcat
 # ---------------------------------------------------------------------------
 
 def run_sweep(
-    a1: float = 0.0,
+    a1: float = 1.0,
     a2_values: list[float] | None = None,
     a4_values: list[float] | None = None,
     no_preserving: bool = False,
@@ -78,9 +78,9 @@ def run_sweep(
         'mean_only', 'apply_2step_correction', 'use_gam'
     """
     if a2_values is None:
-        a2_values = list(np.arange(0.0, 0.31, 0.05))
+        a2_values = list(np.arange(0.0, 0.3, 0.05))
     if a4_values is None:
-        a4_values = list(np.arange(0.0, 0.51, 0.05))
+        a4_values = list(np.arange(0.0, 0.5, 0.05))
     if n_nuisance_values is None:
         n_nuisance_values = [1, 2, 5, 10]
 
@@ -262,8 +262,8 @@ def main():
 
     args = parser.parse_args()
 
-    a2_values = list(np.round(np.arange(0.0, args.a2_max + 1e-9, 0.05), 4))
-    a4_values = list(np.round(np.arange(0.0, args.a4_max + 1e-9, 0.05), 4))
+    a2_values = list(np.arange(0.0, args.a2_max, 0.05))
+    a4_values = list(np.arange(0.0, args.a4_max, 0.05))
 
     results = run_sweep(
         a1=args.a1,
