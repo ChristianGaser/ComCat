@@ -15,7 +15,10 @@ avgD, FPR = simulate_comcat(
     n_nuisance=1,
     mean_only=True,
     no_fig=False,
+    use_gam=True,   # add ComCAT-GAM as a third comparison (B-splines for nuisance)
+    gam_df=6,       # B-spline basis dimension per nuisance term
 )
+# avgD / FPR are now (3,): [AnCova, ComCAT-poly, ComCAT-GAM]
 
 Returns
 -------
@@ -134,6 +137,8 @@ def simulate_comcat(
     no_fig: bool = False,
     apply_2step_correction: bool = True,
     seed: int | None = None,
+    use_gam: bool = True,
+    gam_df: int = 6,
 ):
     """
     Simulate data and compare ComCAT harmonisation vs GLM AnCova.
@@ -151,11 +156,16 @@ def simulate_comcat(
     no_fig                 : suppress matplotlib figures
     apply_2step_correction : apply Zhao et al. DoF correction to ComCAT data
     seed                   : random seed for reproducibility (None = random)
+    use_gam                : if True (default), run a third ComCAT arm using
+                             B-spline GAM for all nuisance terms instead of
+                             polynomial expansion. Requires statsmodels.
+    gam_df                 : B-spline basis dimension per nuisance term (default 6).
+                             Recommended values: 5–8 for typical continuous covariates.
 
     Returns
     -------
-    avgD : (2,) ndarray  — mean Cohen's D for [AnCova, ComCAT]
-    FPR  : (2,) ndarray  — false-positive rate at alpha=0.05 for [AnCova, ComCAT]
+    avgD : (2,) or (3,) ndarray  — mean Cohen's D for [AnCova, ComCAT-poly, (ComCAT-GAM)]
+    FPR  : (2,) or (3,) ndarray  — false-positive rate at alpha=0.05
     """
     # lazy import so this module is usable without comcat installed
     from comcat import comcat as _comcat
@@ -205,13 +215,42 @@ def simulate_comcat(
         Y_T += a2 * Z[:, i:i+1]         # broadcast nuisance over n_sim columns
     Y = Y_T.T                            # (n_sim, n)
 
-    # ---- ComCAT harmonisation ----------------------------------------------
+    # ---- ComCAT harmonisation — polynomial ---------------------------------
     if no_preserving:
         Y_comcat, *_ = _comcat(Y, None, Z, None,
                                mean_only=mean_only, poly_degree=1, verbose=False)
     else:
         Y_comcat, *_ = _comcat(Y, None, Z, X,
                                mean_only=mean_only, poly_degree=1, verbose=False)
+
+    # ---- ComCAT harmonisation — GAM (B-splines for every nuisance column) --
+    Y_comcat_gam = None
+    gam_available = False
+    if use_gam:
+        try:
+            smooth_cols = list(range(n_nuisance))  # apply GAM to all nuisance columns
+            z_min = float(Z.min()) - 0.5
+            z_max = float(Z.max()) + 0.5
+            bounds = [(z_min, z_max)] * n_nuisance
+            if no_preserving:
+                Y_comcat_gam, *_ = _comcat(
+                    Y, None, Z, None,
+                    mean_only=mean_only, poly_degree=1, verbose=False,
+                    smooth_terms=smooth_cols,
+                    smooth_term_bounds=bounds,
+                    gam_df=gam_df,
+                )
+            else:
+                Y_comcat_gam, *_ = _comcat(
+                    Y, None, Z, X,
+                    mean_only=mean_only, poly_degree=1, verbose=False,
+                    smooth_terms=smooth_cols,
+                    smooth_term_bounds=bounds,
+                    gam_df=gam_df,
+                )
+            gam_available = True
+        except ImportError:
+            print("  [GAM] statsmodels not installed — skipping ComCAT-GAM arm.")
 
     # ---- residualised adjustment -------------------------------------------
     if no_preserving:
@@ -225,6 +264,8 @@ def simulate_comcat(
     # ---- Zhao two-step correction of ComCAT output -------------------------
     if apply_2step_correction:
         Y_comcat = _two_step_correction(Y_comcat, X[:, None], Z)
+        if gam_available:
+            Y_comcat_gam = _two_step_correction(Y_comcat_gam, X[:, None], Z)
 
     # ---- GLM: AnCova (test X given Z as nuisance) --------------------------
     c_ancova = np.zeros(n_nuisance + 2)
@@ -251,11 +292,25 @@ def simulate_comcat(
 
     beta_hat_comcat = Beta_comcat[:, 0]
 
-    # ---- collect results ---------------------------------------------------
-    avgD = np.array([np.mean(D_ancova), np.mean(D_comcat)])
-    FPR  = np.array([FPR_ancova,        FPR_comcat])
+    # ---- GLM: ComCAT-GAM harmonised data ------------------------------------
+    D_comcat_gam = beta_hat_comcat_gam = None
+    FPR_comcat_gam = None
+    if gam_available:
+        T_cg, trRV_cg, Beta_cg = _calc_glm(Y_comcat_gam, XZ_simple, c_comcat)
+        D_comcat_gam = 2.0 * T_cg / np.sqrt(trRV_cg)
+        Thresh_cg = scipy.stats.t.ppf(1 - 0.05, trRV_cg)
+        FPR_comcat_gam = np.sum(T_cg > Thresh_cg) / n_sim
+        beta_hat_comcat_gam = Beta_cg[:, 0]
 
-    str_data = ['AnCova (GLM)', 'GLM ComCat harmonized']
+    # ---- collect results ---------------------------------------------------
+    if gam_available:
+        avgD = np.array([np.mean(D_ancova), np.mean(D_comcat), np.mean(D_comcat_gam)])
+        FPR  = np.array([FPR_ancova,        FPR_comcat,        FPR_comcat_gam])
+        str_data = ['AnCova (GLM)', 'ComCAT polynomial', 'ComCAT GAM']
+    else:
+        avgD = np.array([np.mean(D_ancova), np.mean(D_comcat)])
+        FPR  = np.array([FPR_ancova,        FPR_comcat])
+        str_data = ['AnCova (GLM)', 'ComCAT polynomial']
 
     # ---- print summary -------------------------------------------------------
     cc = np.corrcoef(np.column_stack([X, Z]).T)
@@ -282,11 +337,16 @@ def simulate_comcat(
 
     # ---- plot ---------------------------------------------------------------
     if not no_fig:
+        D_list_plot = [D_ancova, D_comcat]
+        betas_plot  = [beta_hat_ancova, beta_hat_comcat]
+        if gam_available:
+            D_list_plot.append(D_comcat_gam)
+            betas_plot.append(beta_hat_comcat_gam)
         _plot_results(
             Y0, Y, Y_comcat,
             a2, Z,
-            beta_hat_ancova, beta_hat_comcat,
-            [D_ancova, D_comcat],
+            betas_plot,
+            D_list_plot,
             str_data,
         )
 
@@ -298,8 +358,7 @@ def simulate_comcat(
 # ---------------------------------------------------------------------------
 
 def _plot_results(Y0, Y, Y_comcat, a2, Z,
-                  beta_hat_ancova, beta_hat_comcat,
-                  D_list, str_data):
+                  beta_hats, D_list, str_data):
     try:
         import matplotlib.pyplot as plt
     except ImportError:
@@ -323,8 +382,8 @@ def _plot_results(Y0, Y, Y_comcat, a2, Z,
 
     # Figure 2: beta histograms
     fig2, ax2 = plt.subplots(figsize=(7, 4))
-    ax2.hist(beta_hat_ancova, bins=40, alpha=0.7, label='Beta AnCova',  color=COLORS[0])
-    ax2.hist(beta_hat_comcat, bins=40, alpha=0.7, label='Beta ComCat',  color=COLORS[1])
+    for i, (bh, label) in enumerate(zip(beta_hats, str_data)):
+        ax2.hist(bh, bins=40, alpha=0.6, label=f'Beta {label}', color=COLORS[i])
     ax2.legend()
     ax2.set_title("Beta coefficient distributions")
     ax2.set_xlabel("Beta")
@@ -387,6 +446,10 @@ def main():
                         help="Disable Zhao et al. two-step DoF correction.")
     parser.add_argument("--seed", type=int, default=None,
                         help="Random seed for reproducibility.")
+    parser.add_argument("--no-gam", action="store_true",
+                        help="Skip ComCAT-GAM arm (B-spline nuisance modeling).")
+    parser.add_argument("--gam-df", type=int, default=6,
+                        help="B-spline basis dimension per nuisance term for GAM.")
 
     args = parser.parse_args()
 
@@ -401,6 +464,8 @@ def main():
         no_fig=args.no_fig,
         apply_2step_correction=not args.no_2step,
         seed=args.seed,
+        use_gam=not args.no_gam,
+        gam_df=args.gam_df,
     )
 
 
