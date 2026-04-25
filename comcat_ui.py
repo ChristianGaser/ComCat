@@ -92,14 +92,18 @@ def _save_gifti(Y_harmonized: np.ndarray, ref_imgs: list, out_paths: list[str]):
         nib.save(new_img, out_path)
 
 
-def _load_mat(path: str) -> np.ndarray:
-    """Load Y matrix from a .mat file (MATLAB v5-v7.2 or v7.3 HDF5)."""
+def _load_mat(path: str) -> tuple[np.ndarray, dict]:
+    """Load a .mat file; return (Y, extra_fields) where extra_fields holds all
+    non-private variables other than 'Y' so they can be written back."""
+    _SKIP = {'__header__', '__version__', '__globals__'}
     try:
         from scipy.io import loadmat
         data = loadmat(path)
         if 'Y' not in data:
             raise KeyError("Mat-file does not contain a 'Y' field.")
-        return np.array(data['Y'], dtype=np.float64)
+        Y = np.array(data['Y'], dtype=np.float64)
+        extra = {k: v for k, v in data.items() if k not in _SKIP and k != 'Y'}
+        return Y, extra
     except Exception as e:
         # Try HDF5 / v7.3
         try:
@@ -107,7 +111,9 @@ def _load_mat(path: str) -> np.ndarray:
             with h5py.File(path, 'r') as f:
                 if 'Y' not in f:
                     raise KeyError("Mat-file does not contain a 'Y' field.")
-                return np.array(f['Y'], dtype=np.float64)
+                Y = np.array(f['Y'], dtype=np.float64)
+                extra = {k: np.array(f[k]) for k in f.keys() if k != 'Y'}
+            return Y, extra
         except ImportError:
             raise RuntimeError(
                 "Could not read .mat file. "
@@ -138,7 +144,7 @@ def _build_subfolder(
     else:
         sf = 'comcat'
     if n_sites > 1:
-        sf += f'_sites{n_sites}'
+        sf += f'_sites'
     if n_preserve > 0:
         sf += f'_preserve{n_preserve}'
     if mean_only:
@@ -211,8 +217,7 @@ def comcat_ui(
     elif filetype == 'mat':
         if len(files) > 1:
             print("Only one MAT file supported. Ignoring extras.")
-        Y = _load_mat(files[0])
-        meta = None
+        Y, meta = _load_mat(files[0])
     else:  # txt / csv
         if len(files) > 1:
             print("Only one TXT/CSV file supported. Ignoring extras.")
@@ -220,6 +225,28 @@ def comcat_ui(
         meta = None
 
     n_subjects = Y.shape[1] if Y.ndim == 2 else Y.shape[0]
+
+    # For MAT/TXT files, auto-detect orientation by comparing with the length
+    # of any supplied covariate vector.  If Y is stored as (subjects × features)
+    # instead of (features × subjects), transpose it so that columns = subjects.
+    # Track the flip so we can restore the original orientation on save.
+    _Y_was_transposed = False
+    if filetype in ('mat', 'txt') and Y.ndim == 2:
+        ref_len = None
+        for cov in (batch, nuisance, preserve):
+            if cov is not None:
+                ref_len = np.asarray(cov).shape[0]
+                break
+        if ref_len is not None and n_subjects != ref_len:
+            if Y.shape[0] == ref_len:
+                Y = Y.T
+                n_subjects = Y.shape[1]
+                _Y_was_transposed = True
+            else:
+                raise ValueError(
+                    f"Y shape {Y.shape} is incompatible with covariate length "
+                    f"{ref_len}. Expected one dimension to equal {ref_len}."
+                )
 
     # ------------------------------------------------------------------ batch
     if batch is None:
@@ -310,47 +337,55 @@ def comcat_ui(
                       _use_gam, gam_df)
 
     elif filetype == 'mat':
-        prep = 'h'
-        stem = Path(files[0]).stem
-        out_name = Path(pth) / f"{stem}{prep}.mat"
-        _save_mat(str(out_name), {'Y': Y_adj})
+        out_dir = Path(pth) / subfolder
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_name = out_dir / Path(files[0]).name
+        # restore original orientation if Y was transposed on load
+        Y_save = Y_adj.T if _Y_was_transposed else Y_adj
+        # preserve all original fields; replace Y with harmonized version
+        save_dict = {**(meta or {}), 'Y': Y_save}
+        _save_mat(str(out_name), save_dict)
         if verbose:
+            print(f'Saving harmonized data to subfolder "{subfolder}"')
             print(f"Saved harmonized MAT file: {out_name}")
 
         if save_estimates:
             for i in range(gamma_hat.shape[0]):
-                gname = Path(pth) / f"gamma{i+1:02d}.txt"
+                gname = out_dir / f"gamma{i+1:02d}.txt"
                 np.savetxt(str(gname), gamma_hat[i, :][None, :], fmt='%g')
                 if verbose:
                     print(f"Saved {gname} (additive effects)")
             for i in range(delta_hat.shape[0]):
-                dname = Path(pth) / f"delta{i+1:02d}.txt"
+                dname = out_dir / f"delta{i+1:02d}.txt"
                 np.savetxt(str(dname), delta_hat[i, :][None, :], fmt='%g')
                 if verbose:
                     print(f"Saved {dname} (multiplicative effects)")
 
-        _save_log_mat(pth, subfolder, batch, nuisance, preserve, poly_degree,
-                      _use_gam, gam_df)
+        _save_log_mat(str(out_dir), subfolder, batch, nuisance, preserve,
+                      poly_degree, _use_gam, gam_df)
 
     else:  # txt / csv
-        prep = 'h'
-        stem = Path(files[0]).stem
-        ext  = Path(files[0]).suffix
-        out_name = Path(pth) / f"{prep}{stem}{ext}"
-        np.savetxt(str(out_name), Y_adj, fmt='%g')
+        out_dir = Path(pth) / subfolder
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_name = out_dir / Path(files[0]).name
+        # restore original orientation if Y was transposed on load
+        Y_save = Y_adj.T if _Y_was_transposed else Y_adj
+        np.savetxt(str(out_name), Y_save, fmt='%g')
         if verbose:
+            print(f'Saving harmonized data to subfolder "{subfolder}"')
             print(f"Saved harmonized TXT file: {out_name}")
 
         if save_estimates:
+            ext = Path(files[0]).suffix
             for i in range(gamma_hat.shape[0]):
-                gname = Path(pth) / f"gamma{i+1:01d}{ext}"
+                gname = out_dir / f"gamma{i+1:02d}{ext}"
                 np.savetxt(str(gname), gamma_hat[i, :][None, :], fmt='%g')
             for i in range(delta_hat.shape[0]):
-                dname = Path(pth) / f"delta{i+1:01d}{ext}"
+                dname = out_dir / f"delta{i+1:02d}{ext}"
                 np.savetxt(str(dname), delta_hat[i, :][None, :], fmt='%g')
 
-        _save_log_mat(pth, subfolder, batch, nuisance, preserve, poly_degree,
-                      _use_gam, gam_df)
+        _save_log_mat(str(out_dir), subfolder, batch, nuisance, preserve,
+                      poly_degree, _use_gam, gam_df)
 
     if verbose:
         print()
