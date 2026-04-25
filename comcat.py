@@ -70,8 +70,9 @@ Typical `gam_df` choices by covariate type:
 | General rule          | max(5, n // 30)    | Cap at 15 for any sample size      |
 
 Practical guidelines:
-- The default `gam_df=6` is appropriate for most neuroimaging covariates.
-  Increase only if residuals show clear remaining non-linear patterns.
+- `gam_df=None` (default) uses the sample-size heuristic min(15, max(5, n//30)):
+    n=80  → 5,  n=200 → 6,  n=300 → 10,  n=500 → 15 (capped).
+  Pass an explicit integer to override.
 - Values above 15 rarely help and inflate the design matrix (slows pinv).
 - For small samples (n < 100): keep `gam_df ≤ 6` to avoid near-rank-deficiency.
 - Always set `smooth_term_bounds` explicitly in train/test workflows so the
@@ -102,7 +103,7 @@ def comcat(
     return_estimates: bool = False,
     smooth_terms: list[int] | str | None = 'all',
     smooth_term_bounds=None,
-    gam_df: int = 6,
+    gam_df: int | None = None,
 ):
     """ComCAT harmonization for sites and nuisance parameters."""
 
@@ -149,6 +150,13 @@ def comcat(
 
     n_Z = nuisance.shape[1]
     n_X = preserve.shape[1]
+
+   # Resolve gam_df from sample size when not set explicitly:
+    #   min(15, max(5, n_subjects // 30))
+    if gam_df is None:
+        gam_df = min(15, max(5, n_subjects // 30))
+        if verbose:
+            print(f"[ComCAT] gam_df auto-selected: {gam_df} (n={n_subjects})")
 
     # Resolve 'all' sentinel: apply GAM to every nuisance column
     if smooth_terms == 'all':
@@ -290,26 +298,19 @@ def comcat(
     X_nuisance = np.hstack([batchmod] + ([nuisance] if n_Z > 0 else []))   # (n_subjects, n_batch + n_Z)
     gamma_hat_masked = pinv(X_nuisance) @ Ym.T   # (n_batch+n_Z, n_valid)
 
-    # remove additive nuisance before estimating scales
-    Ym_for_delta = Ym.copy()
-    if n_Z > 0 and False:
-        Ym_for_delta = Ym_for_delta - (nuisance @ gamma_hat_masked[n_batch:, :]).T
-
     delta_hat_masked = np.zeros((n_batch + n_Z, Ym.shape[0]), dtype=np.float64)
     for i in range(n_batch):
         idx = batches[i]
         if mean_only:
             delta_hat_masked[i, :] = 1.0
         else:
-            delta_hat_masked[i, :] = np.var(Ym_for_delta[:, idx], axis=1, ddof=1)
+            delta_hat_masked[i, :] = np.var(Ym[:, idx], axis=1, ddof=1)
 
     for i in range(n_batch, n_batch + n_Z):
         if mean_only:
             delta_hat_masked[i, :] = 1.0
         else:
-            delta_hat_masked[i, :] = np.var(Ym_for_delta, axis=1, ddof=1)
-
-    del Ym_for_delta
+            delta_hat_masked[i, :] = np.var(Ym, axis=1, ddof=1)
 
     # --------------------------------------------------- adjust data
     if verbose:

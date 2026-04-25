@@ -137,7 +137,7 @@ def _build_subfolder(
     mean_only: bool,
     poly_degree: int,
     use_gam: bool = True,
-    gam_df: int = 6,
+    gam_df: int | None = None,
 ) -> str:
     if n_sites > 1 and n_nuisance == 0:
         sf = 'combat'
@@ -179,7 +179,7 @@ def comcat_ui(
     verbose: bool = True,
     smooth_terms: list[int] | str | None = 'all',
     smooth_term_bounds=None,
-    gam_df: int = 6,
+    gam_df: int | None = None,
 ):
     """
     Run ComCAT on a list of image/data files and save harmonized results.
@@ -200,7 +200,8 @@ def comcat_ui(
                     'all' (default) — all nuisance columns; None — polynomial only;
                     list of 0-based indices — GAM for those, polynomial for the rest.
     smooth_term_bounds : boundary knots; None infers from data (fine for single-dataset use).
-    gam_df        : B-spline basis dimension per smooth term (default 6).
+    gam_df        : B-spline basis dimension per smooth term.
+                    None (default) — auto-selected from sample size: min(15, max(5, n//30)).
     """
     if not files:
         raise ValueError("No input files provided.")
@@ -280,6 +281,10 @@ def comcat_ui(
               f"{np.mean(np.abs(off_diag)):.3f}")
 
     # --------------------------------------------------------- harmonize
+    # Resolve gam_df here so subfolder name and log mat are consistent
+    if gam_df is None:
+        gam_df = min(15, max(5, n_subjects // 30))
+
     # Determine whether GAM is active (for subfolder naming and log)
     _use_gam = (
         smooth_terms == 'all'
