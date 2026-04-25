@@ -158,12 +158,6 @@ SOFTWARE.
   if verbose, fprintf('[ComCAT] Fitting L/S model\n'); end
   X_nuisance = XZ(:,[ind_batch ind_nuisance]);
   gamma_hat_masked = pinv(X_nuisance)*Y';
-
-  % Remove additive nuisance effects before estimating site-specific scales.
-  Y_for_delta = Y;
-  if n_Z
-    Y_for_delta = Y_for_delta - (XZ(:,ind_nuisance)*gamma_hat_masked(ind_nuisance,:))';
-  end
   
   delta_hat = zeros(n_batch+n_Z,size(Y,1));
   for i=1:n_batch
@@ -171,18 +165,17 @@ SOFTWARE.
     if mean_only
       delta_hat(i,:) = ones(1,size(Y,1));
     else
-      delta_hat(i,:) = var(Y_for_delta(:,indices),[],2)';
+      delta_hat(i,:) = var(Y(:,indices),[],2)';
     end
   end
   for i=n_batch+1:n_batch+n_Z
-    varY = var(Y_for_delta,[],2)';
+    varY = var(Y,[],2)';
     if mean_only
       delta_hat(i,:) = ones(1,size(Y,1));
     else
       delta_hat(i,:) = varY;
     end
   end
-  clear Y_for_delta
   
   if verbose, fprintf('[ComCAT] Adjusting the Data\n'); end
   for i=1:n_batch
