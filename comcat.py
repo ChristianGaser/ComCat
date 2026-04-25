@@ -170,12 +170,15 @@ def comcat(
     # ------------------------------------------------------------------ mask
     sd0 = np.std(Y, axis=1, ddof=1)
     ind_mask = (sd0 > 0) & np.isfinite(sd0)
+    #avg = np.mean(Y, axis=1)
+    #ind_mask = (sd0 > np.max(avg)/100) & np.isfinite(sd0)
     ind_nan = np.isnan(sd0)
 
     Ym = Y[ind_mask, :]          # (n_valid, n_subjects)
 
     # ------------------------------------------------ nuisance basis expansion
     n_nuisance_orig = n_Z          # columns before expansion (needed for from_training)
+    nuisance_orig = nuisance.copy()  # keep original columns for confounding diagnostics
     if n_Z > 0:
         if verbose:
             has_gam = smooth_terms and len(smooth_terms) > 0
@@ -216,12 +219,40 @@ def comcat(
             print(f"[ComCAT] Preserving {n_X} covariate(s)")
     XZ = np.hstack(parts)    # (n_subjects, n_batch + n_Z + n_X)
 
-    # confounding check
+    # confounding check — warn but continue (pinv handles rank deficiency)
     if np.linalg.matrix_rank(XZ) < XZ.shape[1]:
-        raise ValueError(
-            "Design matrix is rank-deficient (covariates confounded with batch). "
-            "Please remove confounded covariates and rerun ComCAT."
-        )
+        # Identify which *original* nuisance columns are most confounded with
+        # batch by computing the R² of regressing each original column onto
+        # the batch one-hot matrix.
+        confounded = []
+        if nuisance_orig.shape[1] > 0:
+            for col_idx in range(nuisance_orig.shape[1]):
+                col = nuisance_orig[:, col_idx]
+                proj = batchmod @ (pinv(batchmod) @ col)
+                ss_res = np.sum((col - proj) ** 2)
+                ss_tot = np.sum((col - col.mean()) ** 2)
+                r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 1.0
+                if r2 > 0.95:
+                    confounded.append((col_idx, r2))
+        if confounded:
+            details = ", ".join(
+                f"col {i} (R²={r:.3f})" for i, r in confounded
+            )
+            import warnings
+            warnings.warn(
+                "Design matrix is rank-deficient: nuisance covariate(s) are "
+                f"strongly confounded with batch — {details}. "
+                "Proceeding with pseudoinverse; confounded columns will have "
+                "reduced or no independent effect.",
+                RuntimeWarning, stacklevel=3,
+            )
+        else:
+            import warnings
+            warnings.warn(
+                "Design matrix is rank-deficient (covariates confounded with "
+                "batch). Proceeding with pseudoinverse.",
+                RuntimeWarning, stacklevel=3,
+            )
 
     # --------------------------------------------------- standardize
     if verbose:
@@ -261,7 +292,7 @@ def comcat(
 
     # remove additive nuisance before estimating scales
     Ym_for_delta = Ym.copy()
-    if n_Z > 0:
+    if n_Z > 0 and False:
         Ym_for_delta = Ym_for_delta - (nuisance @ gamma_hat_masked[n_batch:, :]).T
 
     delta_hat_masked = np.zeros((n_batch + n_Z, Ym.shape[0]), dtype=np.float64)
