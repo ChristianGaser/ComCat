@@ -201,7 +201,7 @@ def comcat_ui(
                     list of 0-based indices — GAM for those, polynomial for the rest.
     smooth_term_bounds : boundary knots; None infers from data (fine for single-dataset use).
     gam_df        : B-spline basis dimension per smooth term.
-                    None (default) — auto-selected from sample size: min(15, max(5, n//30)).
+                    None (default) — auto-selected from sample size: min(14, max(5, n//30)).
     """
     if not files:
         raise ValueError("No input files provided.")
@@ -283,7 +283,7 @@ def comcat_ui(
     # --------------------------------------------------------- harmonize
     # Resolve gam_df here so subfolder name and log mat are consistent
     if gam_df is None:
-        gam_df = min(15, max(5, n_subjects // 30))
+        gam_df = min(14, max(5, n_subjects // 30))
 
     # Determine whether GAM is active (for subfolder naming and log)
     _use_gam = (

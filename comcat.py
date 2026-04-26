@@ -51,7 +51,7 @@ smooth_term_bounds   : boundary knots for each smooth term.
                        • [(lo0,hi0), (lo1,hi1), ...] — one pair per entry in smooth_terms
                        For apply-to-new-data workflows, always specify explicit bounds
                        that cover the full range of training AND test data.
-gam_df               : int, B-spline basis dimension per smooth term (default 6).
+gam_df               : int, B-spline basis dimension per smooth term (default None).
                        Higher values capture finer nonlinearities but risk overfitting.
 
 GAM smoothness recommendations
@@ -67,13 +67,13 @@ Typical `gam_df` choices by covariate type:
 | TIV / ICV (cm³)       | 5 – 7              | Moderate curvature expected        |
 | Continuous score      | 5 – 6              | Unless strong curvature suspected  |
 | Cortical thickness    | 6 – 8              | Similar to age                     |
-| General rule          | max(5, n // 30)    | Cap at 15 for any sample size      |
+| General rule          | max(5, n // 30)    | Cap at 14 for any sample size      |
 
 Practical guidelines:
-- `gam_df=None` (default) uses the sample-size heuristic min(15, max(5, n//30)):
-    n=80  → 5,  n=200 → 6,  n=300 → 10,  n=500 → 15 (capped).
+- `gam_df=None` (default) uses the sample-size heuristic min(14, max(5, n//30)):
+    n=80  → 5,  n=200 → 6,  n=300 → 10,  n=500 → 14 (capped).
   Pass an explicit integer to override.
-- Values above 15 rarely help and inflate the design matrix (slows pinv).
+- Values above 14 rarely help and inflate the design matrix (slows pinv).
 - For small samples (n < 100): keep `gam_df ≤ 6` to avoid near-rank-deficiency.
 - Always set `smooth_term_bounds` explicitly in train/test workflows so the
   knot positions are identical between training and new data.
@@ -151,10 +151,10 @@ def comcat(
     n_Z = nuisance.shape[1]
     n_X = preserve.shape[1]
 
-   # Resolve gam_df from sample size when not set explicitly:
-    #   min(15, max(5, n_subjects // 30))
+    # Resolve gam_df from sample size when not set explicitly:
+    #   min(14, max(5, n_subjects // 30))
     if gam_df is None:
-        gam_df = min(15, max(5, n_subjects // 30))
+        gam_df = min(14, max(5, n_subjects // 30))
         if verbose:
             print(f"[ComCAT] gam_df auto-selected: {gam_df} (n={n_subjects})")
 
