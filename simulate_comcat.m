@@ -28,7 +28,7 @@ function [avgD, FPR] = simulate_comcat(a, no_preserving, n, n_sim, n_nuisance, n
 
 % Amplitude settings for effects of interest and nuisance variables
 a1 = 1.0;  % Amplitude of EoI.
-a2 = 0.2; % Amplitude of nuisance effect.
+a2 = 0.2;  % Amplitude of nuisance effect.
 a3 = 0.0;  % Amplitude of multiplicative effect.
 a4 = 0.5;  % covariance between nuisance and covariate of interest
 
