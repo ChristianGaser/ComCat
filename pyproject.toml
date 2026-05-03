@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "comcat"
+version = "0.1.0"
+description = "ComCAT — Combating CovariATe Effects: multi-site neuroimaging harmonization"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Christian Gaser", email = "christian.gaser@uni-jena.de" },
+]
+requires-python = ">=3.8"
+keywords = ["neuroimaging", "harmonization", "ComBat", "batch-effects", "MRI"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+dependencies = [
+    "numpy>=1.22",
+    "scipy>=1.8",
+    "nibabel>=4.0",
+    "statsmodels>=0.13",
+    "h5py>=3.0",
+    "matplotlib>=3.5",
+]
+
+[project.urls]
+Homepage = "https://github.com/ChristianGaser/ComCat"
+"Bug Tracker" = "https://github.com/ChristianGaser/ComCat/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["comcat*"]

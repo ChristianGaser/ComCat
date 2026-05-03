@@ -1,6 +1,10 @@
 > [!WARNING]
 > This project is **currently under construction** and might contain bugs. **If you experience any issues, please [let me know](https://github.com/ChristianGaser/ComCat/issues)!**
 
+> [!CAUTION]
+> **Current scope is limited to BrainAGE and normative modelling workflows.**  
+> For general GLM-based group analyses, harmonizing data with ComCAT and then running a standard GLM inflates degrees of freedom and leads to inflated false-positive rates. The two-step correction proposed by Li et al. that addresses this problem is **not yet implemented** in the production pipeline (`comcat_ui.py`). It is only available inside the simulation framework (`simulate_comcat.py`) for evaluation purposes. Until the Li et al. correction is integrated, avoid using ComCAT-harmonized data as input to group-comparison GLMs.
+
 # ComCAT — Combating CovariATe Effects
 
 ComCAT is a Python toolkit for **harmonizing multi-site neuroimaging data**. It removes scanner/site batch effects and unwanted nuisance covariate effects from high-dimensional data (e.g., voxel- or vertex-wise brain maps) while preserving biological signals of interest such as age or group membership. ComCAT is a heavily extended Python port of the original MATLAB-based ComBat/ComCAT implementation.
@@ -45,15 +49,33 @@ The method is equivalent to ComBat when only batch correction is requested (exce
 
 ## Installation
 
-ComCAT has no mandatory installation step. Clone the repository and ensure the following Python packages are available:
+ComCAT has no mandatory installation step — clone the repository and install dependencies. Requires **Python ≥ 3.8**.
 
+**Install required dependencies only:**
 ```bash
-pip install numpy scipy nibabel
-# optional — required for B-spline GAM nuisance modelling:
-pip install statsmodels
-# optional — required for MATLAB v7.3 (.mat) files:
-pip install h5py
+pip install -r requirements.txt
 ```
+
+**Install all optional dependencies at once:**
+```bash
+pip install ".[all]"
+```
+
+**Install selectively via extras:**
+```bash
+pip install ".[gam]"    # B-spline GAM nuisance modelling (statsmodels)
+pip install ".[mat73]"  # MATLAB v7.3 / HDF5 .mat files (h5py)
+pip install ".[plot]"   # plotting in simulation tools (matplotlib)
+```
+
+| Dependency | Required | Purpose |
+|---|---|---|
+| `numpy>=1.22` | Yes | Array operations |
+| `scipy>=1.8` | Yes | `.mat` file I/O (v5–v7.2), stats |
+| `nibabel>=4.0` | Yes | NIfTI / GIFTI file I/O |
+| `statsmodels>=0.13` | Yes | B-spline GAM for `smooth_terms` |
+| `h5py>=3.0` | Yes | MATLAB v7.3 `.mat` files |
+| `matplotlib>=3.5` | Yes | Plots in simulation tools |
 
 Add the repository directory to your Python path or pass it via `sys.path.insert` (see `run_comcat_from_files.py` for an example).
 

@@ -1,0 +1,7 @@
+# ComCAT — required dependencies
+numpy>=1.22
+scipy>=1.8
+nibabel>=4.0
+statsmodels>=0.13
+h5py>=3.0
+matplotlib>=3.5
