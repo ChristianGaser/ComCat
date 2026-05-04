@@ -26,7 +26,7 @@ The lower bound of 5 ensures that nonlinear shape can be captured even in small 
 
 All parameters are estimated jointly in a single ordinary least squares (OLS) step on the full design matrix:
 
-$$\hat{\boldsymbol{\beta}} = \text{pinv}\!\left(\bigl[\mathbf{B}\ \tilde{\mathbf{Z}}\ \mathbf{X}\bigr]\right) \cdot Y^T$$
+$$\hat{\boldsymbol{\beta}} = \text{pinv}\left(\bigl[\mathbf{B}\ \tilde{\mathbf{Z}}\ \mathbf{X}\bigr]\right) \cdot Y^T$$
 
 By the Frisch–Waugh–Lovell theorem, the estimate $\hat{\boldsymbol{\beta}}_X$ for the preserved covariates is identical whether obtained from this joint model or from a regression on residuals after partialling out $[\mathbf{B}\ \tilde{\mathbf{Z}}]$. The preserved covariates are therefore correctly accounted for regardless of their correlation with batch or nuisance variables, provided the design matrix is not rank-deficient.
 
@@ -50,11 +50,11 @@ $$Y_v^{\text{std}} = \frac{Y_v - \bar{\mu}_v - \mathbf{X}\hat{\boldsymbol{\beta}
 
 After standardization, the additive effects of both batch and nuisance variables are re-estimated from the standardized data using the reduced design matrix $[\mathbf{B}\ \tilde{\mathbf{Z}}]$:
 
-$$\hat{\gamma}_v = \text{pinv}\!\left([\mathbf{B}\ \tilde{\mathbf{Z}}]\right) \cdot (Y_v^{\text{std}})^T$$
+$$\hat{\gamma}_v = \text{pinv}\left([\mathbf{B}\ \tilde{\mathbf{Z}}]\right) \cdot (Y_v^{\text{std}})^T$$
 
 The site-specific multiplicative (variance) effects are estimated directly from the within-site variance of the standardized data:
 
-$$\hat{\delta}_{i,v}^2 = \text{Var}\!\left( Y_{v,\text{batch}=i}^{\text{std}} \right)$$
+$$\hat{\delta}_{i,v}^2 = \text{Var}\left( Y_{v,\text{batch}=i}^{\text{std}} \right)$$
 
 Estimating $\hat{\delta}_{i,v}^2$ from the within-site variance directly — without first removing the additive nuisance effects — preserves the full per-site variance structure that the multiplicative correction is intended to remove. If the mean-only option is set, $\hat{\delta}_{i,v}^2 = 1$ for all batches.
 
