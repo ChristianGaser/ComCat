@@ -45,7 +45,7 @@ ComCAT implements a harmonization model that:
 
 The method is equivalent to ComBat when only batch correction is requested (except that no emprical Bayes is implemented), and extends it with flexible nuisance modelling when covariates are provided.
 
-If you are interested in the theoretical background of ComCat then you can read [this](ComCat-Theory.md).
+If you are interested in ComCat's theoretical background, you can read about it [here](ComCat-Theory.md).
 
 ---
 
