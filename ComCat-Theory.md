@@ -17,7 +17,7 @@ $$z_q \mapsto \tilde{\mathbf{Z}}_q = [b_1(z_q),\ b_2(z_q),\ \ldots,\ b_d(z_q)]$$
 
 where $b_1, \ldots, b_d$ are B-spline basis functions defined over equally spaced knots within the observed range of $z_q$. The basis dimension is the standard GAM smoothness parameter, denoted `gam_df` throughout this paper. To balance flexibility and overfitting risk while adapting to sample size, `gam_df` is selected automatically as:
 
-$$\text{gam\_df} = \min\!\left(10,\ \max\!\left(5,\ \lfloor N/30 \rfloor\right)\right)$$
+$${gam_{df}} = \min\left(10,\ \max\left(5,\ \lfloor N/30 \rfloor\right)\right)$$
 
 The lower bound of 5 ensures that nonlinear shape can be captured even in small samples; the upper bound of 10 limits flexibility to prevent overfitting. The implications of this upper bound for preserving biological group differences are addressed in the Discussion. The expanded nuisance design matrix is denoted $\tilde{\mathbf{Z}}$ with $Q' = Q \cdot d$ columns.
 
