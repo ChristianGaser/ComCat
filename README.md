@@ -45,6 +45,8 @@ ComCAT implements a harmonization model that:
 
 The method is equivalent to ComBat when only batch correction is requested (except that no emprical Bayes is implemented), and extends it with flexible nuisance modelling when covariates are provided.
 
+If you are interested in the theoretical background of ComCat then you can read [this](ComCat-Theory.md).
+
 ---
 
 ## Installation
@@ -54,18 +56,6 @@ ComCAT has no mandatory installation step — clone the repository and install d
 **Install required dependencies only:**
 ```bash
 pip install -r requirements.txt
-```
-
-**Install all optional dependencies at once:**
-```bash
-pip install ".[all]"
-```
-
-**Install selectively via extras:**
-```bash
-pip install ".[gam]"    # B-spline GAM nuisance modelling (statsmodels)
-pip install ".[mat73]"  # MATLAB v7.3 / HDF5 .mat files (h5py)
-pip install ".[plot]"   # plotting in simulation tools (matplotlib)
 ```
 
 | Dependency | Required | Purpose |
