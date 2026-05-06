@@ -212,7 +212,7 @@ python comcat_ui.py --help
 |---|---|---|
 | NIfTI | `.nii`, `.nii.gz` | One file per subject; includes CIFTI |
 | GIFTI | `.func.gii`, `.shape.gii`, `.gii` | Surface data |
-| MATLAB | `.mat` | Single file containing variable `Y` of shape `(n_features × n_subjects)`; supports v5–v7.3 (requires `h5py` for v7.3) |
+| MATLAB | `.mat` | Single file containing variable `Y` of shape `(n_features × n_subjects)`, i.e. created by [BA_data2mat.m](https://github.com/ChristianGaser/BrainAGE); supports v5–v7.3 (requires `h5py` for v7.3) |
 | Plain text / CSV | `.txt`, `.csv` | Single file; shape auto-detected |
 
 ### Output naming
@@ -255,7 +255,7 @@ python run_comcat_from_files.py
 
 `preserve.txt` — same format as `nuisance.txt`.
 
-`data.mat` — MATLAB file containing variable `Y` of shape `(n_features × n_subjects)`.
+`data.mat` — MATLAB file containing variable `Y` of shape `(n_features × n_subjects)`, i.e created by [BA_data2mat.m](https://github.com/ChristianGaser/BrainAGE).
 
 **Setting the ComCAT directory**
 
