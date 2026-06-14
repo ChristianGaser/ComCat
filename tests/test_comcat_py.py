@@ -26,9 +26,14 @@ import sys
 import numpy as np
 from scipy.io import loadmat
 
-# Make sure comcat.py is importable from the same directory
-sys.path.insert(0, os.path.dirname(__file__))
+# comcat.py lives in the repo root, one level up from this tests/ directory
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+sys.path.insert(0, _ROOT)
 from comcat import comcat, comcat_from_training
+
+# .mat reference files (MATLAB-generated) are looked for next to this script
+DATA_DIR = _HERE
 
 try:
     import statsmodels  # noqa: F401
@@ -43,7 +48,7 @@ RTOL = 1e-4
 
 def load(fname):
     """Load a -v6 .mat file, return as dict of numpy arrays."""
-    raw = loadmat(fname, squeeze_me=True)
+    raw = loadmat(os.path.join(DATA_DIR, fname), squeeze_me=True)
     return {k: np.array(v, dtype=np.float64)
             for k, v in raw.items() if not k.startswith('_')}
 
@@ -297,7 +302,7 @@ def test_gam_from_training():
 if __name__ == "__main__":
     missing = [f for f in ("test_case1.mat", "test_case2.mat", "test_case3.mat",
                            "test_case4.mat", "test_case5.mat")
-               if not os.path.exists(f)]
+               if not os.path.exists(os.path.join(DATA_DIR, f))]
     if missing:
         print("ERROR: Missing MATLAB-generated test files:", missing)
         print("       Run gen_test_data.m in MATLAB first.")

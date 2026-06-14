@@ -22,7 +22,7 @@ Design notes
   batch** (so per-batch variance is computed locally).  Polynomial nuisance is
   intentionally unsupported — ComCAT uses GAM B-splines.
 
-See DECENTRALIZED-GAM-DESIGN.md for the full design.
+See tests/DECENTRALIZED-GAM-DESIGN.md for the full design.
 """
 
 from __future__ import annotations

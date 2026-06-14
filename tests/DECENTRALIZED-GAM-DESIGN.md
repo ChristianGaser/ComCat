@@ -3,7 +3,7 @@
 This documents how ComCAT's **GAM B-spline nuisance basis** is reproduced in a
 decentralized setting so the result matches a centralized `comcat()` run without
 pooling raw imaging data. It is implemented in
-[`decentralized_comcat.py`](decentralized_comcat.py) and builds on the
+[`decentralized_comcat.py`](../decentralized_comcat.py) and builds on the
 decentralized fit POC ([`poc_decentralized_comcat.py`](poc_decentralized_comcat.py)),
 which already proved the regression / standardization / L/S steps reproduce
 centralized output to machine precision.
@@ -24,7 +24,7 @@ centralized output to machine precision.
 ## 1. Problem statement
 
 In `comcat()`, each smooth nuisance column is expanded into a B-spline basis
-before entering the design matrix (`_build_nuisance_basis`, [comcat.py](comcat.py)):
+before entering the design matrix (`_build_nuisance_basis`, [comcat.py](../comcat.py)):
 `statsmodels` `BSplines` with `df`, `degree=3`.
 
 The only **data-dependent** quantity is the inner knot vector — the empirical
@@ -89,7 +89,7 @@ The knot fit is a single extra round at the front of the decentralized protocol
 (before the design-matrix regression), because the expanded nuisance columns are
 part of the design matrix `XZ`.
 
-Helpers in [`decentralized_comcat.py`](decentralized_comcat.py):
+Helpers in [`decentralized_comcat.py`](../decentralized_comcat.py):
 `bspline_spec_from_pooled_unique`, `build_constructor`, `expand_nuisance`.
 
 ---
@@ -112,7 +112,7 @@ harmonization; the sensitive imaging data never moves, and de-duplicating to
 unique values weakens any linkage.
 
 `gam_df` is computed centrally from the pooled `n` (same heuristic as
-[comcat.py:156](comcat.py#L156)) so every site uses an identical value.
+[comcat.py:156](../comcat.py#L156)) so every site uses an identical value.
 
 ---
 
@@ -139,9 +139,9 @@ the nuisance δ rows are pooled.
 
 ## 6. Why `comcat.py` stays untouched
 
-`comcat_from_training` ([comcat.py:512](comcat.py#L512)) already reads
+`comcat_from_training` ([comcat.py:512](../comcat.py#L512)) already reads
 `estimates['spline_constructors']` and applies basis columns via
-`bs.transform()` ([comcat.py:478](comcat.py#L478)). The decentralized module
+`bs.transform()` ([comcat.py:478](../comcat.py#L478)). The decentralized module
 assembles an `estimates` dict whose `spline_constructors` are BSplines built with
 injected knots — so both the fit rounds and the apply step evaluate an identical
 basis with no library changes.

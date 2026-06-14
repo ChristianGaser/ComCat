@@ -80,7 +80,7 @@ Add the repository directory to your Python path or pass it via `sys.path.insert
 | `run_comcat_from_files.py` | Example/template script for processing multiple datasets |
 | `simulate_comcat.py` | Monte-Carlo simulation comparing ComCAT vs GLM AnCova |
 | `simulate_comcat_ui.py` | Parameter sweep over simulation conditions |
-| `test_comcat_py.py` | Numerical validation against MATLAB reference output |
+| `tests/test_comcat_py.py` | Numerical validation against MATLAB reference output |
 
 ---
 
@@ -318,14 +318,14 @@ Results are stored as arrays of shape `(n_a2, n_a4, n_nuisance, n_methods)` for 
 
 Validates that `comcat.py` produces results numerically identical to the MATLAB reference implementation within float32 tolerances (`atol=1e-4`, `rtol=1e-4`).
 
-**Step 1** — Generate test data in MATLAB:
+**Step 1** — Generate test data in MATLAB and place the `test_case*.mat` files in the `tests/` directory (the test script looks for them next to itself):
 ```matlab
 gen_test_data   % produces test_case1.mat, test_case2.mat, test_case3.mat
 ```
 
 **Step 2** — Run the Python tests:
 ```bash
-python test_comcat_py.py
+python tests/test_comcat_py.py
 ```
 
 Three test cases are covered:

@@ -21,9 +21,14 @@ Only aggregate statistics ever leave a site; individual subjects never do.
 
 from __future__ import annotations
 
+import os
+import sys
+
 import numpy as np
 from numpy.linalg import pinv
 
+# comcat.py lives in the repo root, one level up from this tests/ directory
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from comcat import comcat, comcat_from_training, _to_col_matrix
 
 
