@@ -80,7 +80,12 @@ Add the repository directory to your Python path or pass it via `sys.path.insert
 | `run_comcat_from_files.py` | Example/template script for processing multiple datasets |
 | `simulate_comcat.py` | Monte-Carlo simulation comparing ComCAT vs GLM AnCova |
 | `simulate_comcat_ui.py` | Parameter sweep over simulation conditions |
+| `decentralized_comcat.py` | Experimental decentralized/federated harmonization (sites never pool raw data) — see **[DECENTRALIZED.md](DECENTRALIZED.md)** |
 | `tests/test_comcat_py.py` | Numerical validation against MATLAB reference output |
+
+> **Decentralized / federated use:** to harmonize data split across sites that
+> cannot share raw data, see **[DECENTRALIZED.md](DECENTRALIZED.md)**. The result
+> matches centralized `comcat()` to machine precision.
 
 ---
 
