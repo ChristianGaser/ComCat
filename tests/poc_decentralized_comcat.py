@@ -6,7 +6,7 @@ Scenario (deliberately kept simple, NO GAM):
   - 2 sites, each site holds all subjects of exactly one batch
   - one global `preserve` covariate (e.g. age) -> makes the design non-block-
     diagonal so beta genuinely requires cross-site aggregation
-  - no nuisance, no GAM (smooth_terms=None), mean_only=False, ref_batch=None
+  - no nuisance (preserve only), mean_only=False, ref_batch=None
 
 Protocol (mirrors Bostami et al. 2022 pseudo-algorithm):
   Round 0  sites -> aggregator:  n_i, sum(Y), sum(Y^2)      => common mask + n
@@ -176,10 +176,8 @@ def decentralized_fit(site_Y, site_batch_idx, site_preserve, batch_levels):
         'n_batch': n_batch,
         'n_nuisance_orig': 0,
         'n_X': beta_preserve.shape[0],
-        'poly_degree': 2,
         'mean_only': False,
         'ref_level': None,
-        'smooth_terms': None,
         'smooth_term_bounds': None,
         'gam_df': 5,
         'spline_constructors': {},
@@ -211,7 +209,7 @@ def main():
     # ---- centralized reference -------------------------------------------
     Y_central, *_ = comcat(
         Y, batch, nuisance=None, preserve=age,
-        mean_only=False, smooth_terms=None, verbose=False,
+        mean_only=False, verbose=False,
     )
 
     # ---- decentralized: split by site, never pool raw Y -------------------

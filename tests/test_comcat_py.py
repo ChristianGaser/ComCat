@@ -75,17 +75,16 @@ def check_close(name, a, b, atol=ATOL, rtol=RTOL):
 
 
 # ---------------------------------------------------------------------------
-# Test 1 — multi-site, nuisance + preserve, poly_degree=2
+# Test 1 — multi-site, linear nuisance + preserve
 # ---------------------------------------------------------------------------
 def test_case1():
-    print("Case 1: multi-site, nuisance Z (poly=2), preserve X")
+    print("Case 1: multi-site, linear nuisance Z, preserve X")
     d = load("test_case1.mat")
     Y, batch, Z, X = d['Y1'], d['batch1'].astype(int), d['Z1'], d['X1']
 
     # MATLAB batch is 1-based; comcat.py recodes internally, so pass as-is
     Yh_py, bh_py, gh_py, dh_py = comcat(
-        Y, batch, Z, X, mean_only=False, poly_degree=2, verbose=False,
-        smooth_terms=None,
+        Y, batch, Z, X, mean_only=False, verbose=False,
     )
 
     check_close("Y_harmonized", Yh_py, d['Yh1'])
@@ -94,16 +93,15 @@ def test_case1():
 
 
 # ---------------------------------------------------------------------------
-# Test 2 — single site, polynomial nuisance, mean_only=True
+# Test 2 — single site, linear nuisance, mean_only=True
 # ---------------------------------------------------------------------------
 def test_case2():
-    print("Case 2: single site, poly nuisance (poly=2), mean_only=True")
+    print("Case 2: single site, linear nuisance, mean_only=True")
     d = load("test_case2.mat")
     Y, Z, X = d['Y2'], d['Z2'], d['X2']
 
     Yh_py, bh_py, gh_py, dh_py = comcat(
-        Y, None, Z, X, mean_only=True, poly_degree=2, verbose=False,
-        smooth_terms=None,
+        Y, None, Z, X, mean_only=True, verbose=False,
     )
 
     check_close("Y_harmonized", Yh_py, d['Yh2'])
@@ -120,7 +118,7 @@ def test_case3():
     Y, batch, X = d['Y3'], d['batch3'].astype(int), d['X3']
 
     Yh_py, bh_py, gh_py, dh_py = comcat(
-        Y, batch, None, X, mean_only=True, poly_degree=1, verbose=False
+        Y, batch, None, X, mean_only=True, verbose=False
     )
 
     check_close("Y_harmonized", Yh_py, d['Yh3'])
@@ -129,17 +127,16 @@ def test_case3():
 
 
 # ---------------------------------------------------------------------------
-# Test case 4 — multi-site, poly_degree=3, nuisance + preserve
+# Test case 4 — multi-site, linear nuisance + preserve
 # ---------------------------------------------------------------------------
 def test_case4():
-    print("Case 4 (MATLAB match): multi-site, poly_degree=3, nuisance + preserve")
+    print("Case 4 (MATLAB match): multi-site, linear nuisance + preserve")
     d = load("test_case4.mat")
     Y, batch, Z, X = d['Y4'], d['batch4'].astype(int), d['Z4'], d['X4']
 
     Yh_py, bh_py, gh_py, dh_py = comcat(
         Y, batch, Z[:, np.newaxis], X[:, np.newaxis],
-        mean_only=False, poly_degree=3, verbose=False,
-        smooth_terms=None,
+        mean_only=False, verbose=False,
     )
 
     check_close("Y_harmonized", Yh_py, d['Yh4'])
@@ -148,10 +145,10 @@ def test_case4():
 
 
 # ---------------------------------------------------------------------------
-# Test case 5 — four sites, two nuisance columns, poly_degree=3
+# Test case 5 — four sites, two linear nuisance columns
 # ---------------------------------------------------------------------------
 def test_case5():
-    print("Case 5 (MATLAB match): four sites, two nuisance cols, poly_degree=3")
+    print("Case 5 (MATLAB match): four sites, two linear nuisance cols")
     d = load("test_case5.mat")
     Y, batch, Z, X = d['Y5'], d['batch5'].astype(int), d['Z5'], d['X5']
     # Z5 is already (n, 2) from MATLAB
@@ -160,8 +157,7 @@ def test_case5():
 
     Yh_py, bh_py, gh_py, dh_py = comcat(
         Y, batch, Z, X[:, np.newaxis],
-        mean_only=False, poly_degree=3, verbose=False,
-        smooth_terms=None,
+        mean_only=False, verbose=False,
     )
 
     check_close("Y_harmonized", Yh_py, d['Yh5'])
@@ -177,8 +173,8 @@ def test_ref_batch():
     d = load("test_case1.mat")
     Y, batch, Z, X = d['Y1'], d['batch1'].astype(int), d['Z1'], d['X1']
 
-    Yh_py, *_ = comcat(Y, batch, Z, X, mean_only=False, poly_degree=2,
-                        verbose=False, ref_batch=1, smooth_terms=None)
+    Yh_py, *_ = comcat(Y, batch, Z, X, mean_only=False,
+                        verbose=False, ref_batch=1,)
 
     # Reference site (label=1) must be numerically identical to input
     ref_idx = np.where(batch == 1)[0]
@@ -211,8 +207,8 @@ def test_from_training():
 
     # Train on all subjects, get estimates
     Yh_all, _, _, _, est = comcat(
-        Y, batch, Z, X, mean_only=False, poly_degree=2,
-        verbose=False, return_estimates=True, smooth_terms=None,
+        Y, batch, Z, X, mean_only=False,
+        verbose=False, return_estimates=True,
     )
 
     # Apply estimates to all subjects via from_training — must match Yh_all
@@ -222,14 +218,14 @@ def test_from_training():
 
 
 # ---------------------------------------------------------------------------
-# Test 6 — GAM smooth term removes nonlinear nuisance better than poly
+# Test 6 — GAM removes nonlinear nuisance while preserving the covariate of interest
 # ---------------------------------------------------------------------------
 def test_gam_smoothing():
     if not HAS_STATSMODELS:
         print("Case 6: SKIPPED (statsmodels not installed)")
         return
 
-    print("Case 6: GAM smooth term vs polynomial — nonlinear nuisance removal")
+    print("Case 6: GAM nuisance modelling — nonlinear nuisance removal")
     rng = np.random.default_rng(99)
     n, V = 200, 300
 
@@ -237,26 +233,20 @@ def test_gam_smoothing():
     Z      = np.linspace(-2, 2, n)          # continuous nuisance
     X      = rng.standard_normal(n)         # preserve
     E      = rng.standard_normal((V, n))
-    # strong cubic + quadratic nuisance (hard for degree-2 poly to fully remove)
+    # strong cubic + quadratic nuisance (needs a flexible GAM to remove)
     Y = 2 * X + Z + 2 * Z**2 + 0.5 * Z**3 + np.where(batch == 2, 3, 0) + E
 
-    # polynomial (degree 3)
-    Yh_poly, *_ = comcat(Y, batch, Z, X, mean_only=False, poly_degree=3, verbose=False)
+    # ComCAT models the nuisance with a B-spline GAM (always on)
+    Yh_gam, *_ = comcat(Y, batch, Z, X, mean_only=False, verbose=False, gam_df=10)
 
-    # GAM with B-splines — should give equal or better nonlinear fit
-    Yh_gam, *_ = comcat(
-        Y, batch, Z, X, mean_only=False, poly_degree=1, verbose=False,
-        smooth_terms=[0], gam_df=10,
-    )
-
-    # Residual correlation with Z^2 after harmonization (lower = better removal)
+    # Residual correlation with Z^2 (lower = better removal of nonlinear nuisance)
     def resid_corr(Yh, cov):
         # Yh: (V, n), cov: (n,) — correlate each feature row with covariate
         return float(np.mean(np.abs(np.corrcoef(Yh, cov[None, :])[-1, :-1])))
 
-    r_poly = resid_corr(Yh_poly, Z**2)
-    r_gam  = resid_corr(Yh_gam,  Z**2)
-    print(f"  Residual corr(Y_harm, Z^2):  poly={r_poly:.4f}   GAM={r_gam:.4f}")
+    r_raw = resid_corr(Y,      Z**2)
+    r_gam = resid_corr(Yh_gam, Z**2)
+    print(f"  Residual corr(., Z^2):  raw={r_raw:.4f}   GAM={r_gam:.4f}")
 
     # GAM should produce finite, reasonable output
     ok_finite = np.all(np.isfinite(Yh_gam))
@@ -265,10 +255,17 @@ def test_gam_smoothing():
     if not ok_finite:
         raise AssertionError("GAM harmonized output contains non-finite values.")
 
-    # Preserved-covariate correlation should remain high in both cases
-    r_x_poly = resid_corr(Yh_poly, X)
-    r_x_gam  = resid_corr(Yh_gam,  X)
-    print(f"  Preserved corr(Y_harm, X):   poly={r_x_poly:.4f}   GAM={r_x_gam:.4f}")
+    # GAM should substantially reduce the nonlinear (Z^2) nuisance
+    ok_better = r_gam < r_raw
+    status2 = "PASS" if ok_better else "FAIL"
+    print(f"  [{status2}] GAM reduces nonlinear nuisance vs. raw")
+    if not ok_better:
+        raise AssertionError(
+            f"GAM did not reduce nonlinear nuisance: raw={r_raw:.4f}, GAM={r_gam:.4f}")
+
+    # Preserved-covariate correlation should remain high
+    r_x = resid_corr(Yh_gam, X)
+    print(f"  Preserved corr(Y_harm, X):   GAM={r_x:.4f}")
 
 
 # ---------------------------------------------------------------------------
@@ -285,9 +282,9 @@ def test_gam_from_training():
 
     # Train with GAM, get estimates
     Yh_all, _, _, _, est = comcat(
-        Y, batch, Z, X, mean_only=False, poly_degree=1,
+        Y, batch, Z, X, mean_only=False,
         verbose=False, return_estimates=True,
-        smooth_terms=[0], gam_df=10,
+        gam_df=10,
         smooth_term_bounds=(float(Z.min()) - 0.1, float(Z.max()) + 0.1),
     )
 

@@ -13,8 +13,8 @@ centralized output to machine precision.
 - **Mode A only** — knots are reconstructed from the *unique values* of the
   smooth covariate, shared across sites. This is bitwise-exact and matches the
   current centralized quantile-knot default.
-- **GAM B-splines only** — ComCAT uses B-splines; the polynomial nuisance path is
-  not decentralized (it existed only for B-spline-vs-polynomial comparison).
+- **GAM B-splines only** — every nuisance column is modelled with a B-spline
+  GAM, matching centralized ComCAT (which always uses GAM).
 - **`comcat.py` is not modified** — equivalence is achieved by constructing
   `statsmodels` BSplines with *injected* knots and handing them to the existing
   `spline_constructors` hook that `comcat_from_training` already honours.
@@ -162,8 +162,6 @@ basis with no library changes.
 
 ## 8. Not implemented (deliberately)
 
-- **Polynomial nuisance decentralization** — ComCAT uses GAM; the polynomial path
-  was only for comparison.
 - **Moment-only / explicit-knot knot sourcing** — Mode A covers the needed cases;
   other modes would only reduce covariate-value disclosure further at the cost of
   exactness or extra user burden.
