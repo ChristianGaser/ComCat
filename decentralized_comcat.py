@@ -19,8 +19,8 @@ Design notes
   to machine precision (~1e-13), because decentralized regression uses the
   normal-equations form  pinv(ΣXᵢᵀXᵢ)·ΣXᵢᵀYᵢ  (identity: pinv(X)=pinv(XᵀX)Xᵀ).
 * Assumes the federated topology of Bostami et al.: **each site holds exactly one
-  batch** (so per-batch variance is computed locally).  Polynomial nuisance is
-  intentionally unsupported — ComCAT uses GAM B-splines.
+  batch** (so per-batch variance is computed locally).  Nuisance terms use GAM
+  B-splines (smooth columns) or plain linear terms (the rest).
 
 See tests/DECENTRALIZED-GAM-DESIGN.md for the full design.
 """
@@ -272,10 +272,8 @@ def decentralized_fit(site_Y, site_batch_idx, site_nuisance, site_preserve,
         'n_batch': n_batch,
         'n_nuisance_orig': n_nuis_orig,
         'n_X': beta_preserve.shape[0],
-        'poly_degree': 2,                                   # unused (no poly path)
         'mean_only': mean_only,
         'ref_level': None,
-        'smooth_terms': list(smooth_cols),
         'smooth_term_bounds': None,                         # constructors override
         'gam_df': specs[smooth_cols[0]]['df'] if smooth_cols else 5,
         'spline_constructors': constructors,
@@ -324,9 +322,9 @@ def main():
         Y[:, idx] += rng.normal(0.3 * k, 0.1, (n_features, 1))
         Y[:, idx] *= rng.normal(1.0 + 0.2 * k, 0.1, (n_features, 1))
 
-    # centralized reference (default smooth_terms='all' -> GAM on age)
+    # centralized reference (GAM on age — always applied)
     Y_central, *_ = comcat(Y, batch, nuisance=age, preserve=score,
-                           mean_only=False, smooth_terms='all', verbose=False)
+                           mean_only=False, verbose=False)
 
     # decentralized: partition by site, never pool raw Y
     idxs = [np.where(batch == k)[0] for k in range(len(sizes))]
@@ -344,7 +342,7 @@ def main():
 
     # --- bitwise check of the GAM basis itself --------------------------------
     from comcat import _build_nuisance_basis
-    central_basis, _ = _build_nuisance_basis(age[:, None], 2, [0], None,
+    central_basis, _ = _build_nuisance_basis(age[:, None], None,
                                              est['gam_df'], False)
     dec_basis = est['spline_constructors'][0].transform(age[:, None])
     basis_bitwise = np.array_equal(central_basis, dec_basis)

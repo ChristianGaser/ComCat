@@ -7,7 +7,7 @@ from comcat import comcat
 
 Y_harmonized, beta_hat, gamma_hat, delta_hat = comcat(
     Y, batch, nuisance, preserve,
-    mean_only=False, poly_degree=2, verbose=True
+    mean_only=False, verbose=True
 )
 
 Parameters
@@ -17,7 +17,6 @@ batch       : array-like, shape (n_subjects,)  — site/scanner labels
 nuisance    : ndarray or None, shape (n_subjects, n_nuisance)  — variables to remove
 preserve    : ndarray or None, shape (n_subjects, n_preserve)  — variables to keep
 mean_only   : bool   — if True, only adjust mean (no variance scaling)
-poly_degree : int    — polynomial expansion degree for nuisance (default 2)
 verbose     : bool
 
 Returns
@@ -33,20 +32,16 @@ ref_batch            : label of a site to use as reference (its data is left unt
                        all other sites are harmonized relative to it). Default None.
 return_estimates     : if True, a 5th element (dict) with all fitted parameters is
                        returned; pass it to comcat_from_training() for new data.
-smooth_terms         : which nuisance columns to model with B-spline GAM.
-                       • 'all' (default) — apply GAM to every nuisance column
-                       • list of 0-based indices, e.g. [0, 2] — GAM for those columns,
-                         polynomial for the rest
-                       • None — polynomial expansion for all columns (no GAM)
-                       Requires statsmodels when set to 'all' or a non-empty list.
-                       Falls back to polynomial silently if statsmodels is missing.
-smooth_term_bounds   : boundary knots for each smooth term.
+Every nuisance column is always modelled with a B-spline GAM (requires
+statsmodels). The GAM is configured by:
+
+smooth_term_bounds   : boundary knots for the B-spline of each nuisance column.
                        • None  — infer bounds from training data (safe for training only)
-                       • (lo, hi) — same bounds for all smooth terms
-                       • [(lo0,hi0), (lo1,hi1), ...] — one pair per entry in smooth_terms
+                       • (lo, hi) — same bounds for every nuisance column
+                       • [(lo0,hi0), (lo1,hi1), ...] — one pair per nuisance column
                        For apply-to-new-data workflows, always specify explicit bounds
                        that cover the full range of training AND test data.
-gam_df               : int, B-spline basis dimension per smooth term (default None).
+gam_df               : int, B-spline basis dimension per nuisance column (default None).
                        Higher values capture finer nonlinearities but risk overfitting.
 
 GAM smoothness recommendations
@@ -62,8 +57,6 @@ Practical guidelines:
 - For small samples (n < 100): keep `gam_df ≤ 6` to avoid near-rank-deficiency.
 - Always set `smooth_term_bounds` explicitly in train/test workflows so the
   knot positions are identical between training and new data.
-- Combining `smooth_terms` with `poly_degree > 1` for other nuisance columns
-  is supported (hybrid: some columns B-spline, others polynomial).
 """
 
 from __future__ import annotations
@@ -82,11 +75,9 @@ def comcat(
     nuisance: np.ndarray | None = None,
     preserve: np.ndarray | None = None,
     mean_only: bool = False,
-    poly_degree: int = 2,
     verbose: bool = False,
     ref_batch=None,
     return_estimates: bool = False,
-    smooth_terms: list[int] | str | None = 'all',
     smooth_term_bounds=None,
     gam_df: int | None = None,
 ):
@@ -143,10 +134,6 @@ def comcat(
         if verbose:
             print(f"[ComCAT] gam_df auto-selected: {gam_df} (n={n_subjects})")
 
-    # Resolve 'all' sentinel: apply GAM to every nuisance column
-    if smooth_terms == 'all':
-        smooth_terms = list(range(n_Z)) if n_Z > 0 else None
-
     # Y must be (n_features, n_subjects)
     transp = False
     if Y.shape[1] != n_subjects:
@@ -172,14 +159,9 @@ def comcat(
     nuisance_orig = nuisance.copy()  # keep original columns for confounding diagnostics
     if n_Z > 0:
         if verbose:
-            has_gam = smooth_terms and len(smooth_terms) > 0
-            poly_cols = [i for i in range(n_Z) if not (smooth_terms and i in smooth_terms)]
-            if has_gam:
-                print(f"[ComCAT] GAM (B-spline, df={gam_df}) for nuisance col(s): {smooth_terms}")
-            if poly_cols and poly_degree > 1:
-                print(f"[ComCAT] Polynomial extension (degree {poly_degree}) for nuisance col(s): {poly_cols}")
+            print(f"[ComCAT] GAM (B-spline, df={gam_df}) for all {n_Z} nuisance column(s)")
         nuisance, spline_constructors = _build_nuisance_basis(
-            nuisance, poly_degree, smooth_terms, smooth_term_bounds, gam_df, verbose
+            nuisance, smooth_term_bounds, gam_df, verbose
         )
         n_Z = nuisance.shape[1]
     else:
@@ -357,11 +339,9 @@ def comcat(
         'n_nuisance_orig':     n_nuisance_orig,
         'n_Z':                 n_Z,
         'n_X':                 n_X,
-        'poly_degree':         poly_degree,
         'mean_only':           mean_only,
         'ref_level':           ref_level,
-        # GAM parameters (None if not used)
-        'smooth_terms':        smooth_terms,
+        # GAM parameters
         'smooth_term_bounds':  smooth_term_bounds,
         'gam_df':              gam_df,
         'spline_constructors': spline_constructors,
@@ -385,51 +365,23 @@ def _to_col_matrix(arr, n: int) -> np.ndarray:
     return arr
 
 
-def _polynomial(x: np.ndarray, p: int) -> np.ndarray:
-    """Polynomial expansion and Gram-Schmidt orthogonalisation of x up to degree p.
-
-    Returns columns [x, x^2, ..., x^p] orthogonalised against all lower-degree
-    columns (mirrors SPM's spm_detrend / the MATLAB polynomial() helper).
-    """
-    x = np.array(x, dtype=np.float64).ravel()
-    x = x - np.mean(x)   # detrend (mean removal)
-
-    cols = [x]
-    V = np.zeros((len(x), p + 1))
-
-    for j in range(p + 1):
-        xj = x ** j
-        # orthogonalise against previously accumulated V
-        if j > 0:
-            xj = xj - V @ (pinv(V) @ xj)
-        V[:, j] = xj
-        if j >= 2:
-            cols.append(xj)
-
-    return np.column_stack(cols) if len(cols) > 1 else cols[0][:, None]
-
-
 def _build_nuisance_basis(
     nuisance: np.ndarray,
-    poly_degree: int,
-    smooth_terms: list[int] | None,
     smooth_term_bounds,
     gam_df: int,
     verbose: bool = False,
     spline_constructors: dict | None = None,
 ) -> tuple[np.ndarray, dict]:
-    """Expand each nuisance column into a basis for the design matrix.
+    """Expand every nuisance column into a B-spline GAM basis.
 
-    For columns in `smooth_terms`: B-spline basis via statsmodels BSplines.
-    For all other columns:          polynomial expansion (degree `poly_degree`).
+    Each column is modelled with a statsmodels BSplines basis (no linear or
+    polynomial option).
 
     Parameters
     ----------
     nuisance            : (n_subjects, n_cols) raw nuisance array
-    poly_degree         : degree for polynomial columns
-    smooth_terms        : list of 0-based column indices to model with B-splines
-    smooth_term_bounds  : None | (lo, hi) | [(lo0,hi0), ...]
-    gam_df              : B-spline degrees of freedom per smooth term
+    smooth_term_bounds  : None | (lo, hi) | [(lo0,hi0), ...]  (per column)
+    gam_df              : B-spline degrees of freedom per column
     verbose             : print warnings
     spline_constructors : pre-fitted BSplines objects keyed by column index
                           (from estimates dict); when provided, `.transform()` is
@@ -441,49 +393,40 @@ def _build_nuisance_basis(
     new_constructors : dict  {col_idx: BSplines}  (populated only when fitting fresh)
     """
     n_cols = nuisance.shape[1]
-    smooth_set = set(smooth_terms) if smooth_terms else set()
     new_constructors: dict = {}
 
-    if smooth_set:
-        try:
-            from statsmodels.gam.api import BSplines
-        except ImportError as exc:
-            raise ImportError(
-                "statsmodels is required for GAM smoothing. "
-                "Install with:  pip install statsmodels"
-            ) from exc
+    if n_cols == 0:
+        return np.empty((nuisance.shape[0], 0), dtype=np.float64), new_constructors
+
+    try:
+        from statsmodels.gam.api import BSplines
+    except ImportError as exc:
+        raise ImportError(
+            "statsmodels is required for ComCAT nuisance modelling (B-spline GAM). "
+            "Install with:  pip install statsmodels"
+        ) from exc
 
     parts = []
     for i in range(n_cols):
         col = nuisance[:, i:i + 1].astype(float)  # keep 2-D
 
-        if i in smooth_set:
-            if spline_constructors and i in spline_constructors:
-                # apply training knots to new data
-                bs = spline_constructors[i]
-                basis = bs.transform(col)
-            else:
-                # fit new B-spline basis
-                if isinstance(smooth_term_bounds, list):
-                    idx_in_list = sorted(smooth_set).index(i)
-                    lo, hi = smooth_term_bounds[idx_in_list]
-                elif isinstance(smooth_term_bounds, tuple) and smooth_term_bounds != (None, None):
-                    lo, hi = smooth_term_bounds
-                else:
-                    lo, hi = None, None
-                knot_kwds = [{'lower_bound': lo, 'upper_bound': hi}]
-                bs = BSplines(col, df=gam_df, degree=3, knot_kwds=knot_kwds)
-                new_constructors[i] = bs
-                basis = bs.basis
-            parts.append(basis)
+        if spline_constructors and i in spline_constructors:
+            # apply training knots to new data
+            bs = spline_constructors[i]
+            basis = bs.transform(col)
         else:
-            if poly_degree > 1:
-                parts.append(_polynomial(nuisance[:, i], poly_degree))
+            # fit new B-spline basis
+            if isinstance(smooth_term_bounds, list):
+                lo, hi = smooth_term_bounds[i]
+            elif isinstance(smooth_term_bounds, tuple) and smooth_term_bounds != (None, None):
+                lo, hi = smooth_term_bounds
             else:
-                parts.append(col)
-
-    if not parts:
-        return np.empty((nuisance.shape[0], 0), dtype=np.float64), new_constructors
+                lo, hi = None, None
+            knot_kwds = [{'lower_bound': lo, 'upper_bound': hi}]
+            bs = BSplines(col, df=gam_df, degree=3, knot_kwds=knot_kwds)
+            new_constructors[i] = bs
+            basis = bs.basis
+        parts.append(basis)
 
     return np.hstack(parts), new_constructors
 
@@ -536,7 +479,6 @@ def comcat_from_training(
     n_batch           = estimates['n_batch']
     n_nuisance_orig   = estimates['n_nuisance_orig']
     n_X               = estimates['n_X']
-    poly_degree       = estimates['poly_degree']
     ref_level         = estimates['ref_level']
 
     # Map new batch labels to training indices
@@ -555,13 +497,12 @@ def comcat_from_training(
     preserve = _to_col_matrix(preserve, n_subjects)
 
     # Nuisance basis expansion — same configuration as training
-    smooth_terms_ft       = estimates.get('smooth_terms')
     smooth_term_bounds_ft = estimates.get('smooth_term_bounds')
-    gam_df_ft             = estimates.get('gam_df', poly_degree)
+    gam_df_ft             = estimates.get('gam_df')
     spline_constructors   = estimates.get('spline_constructors', {})
     if n_nuisance_orig > 0:
         nuisance, _ = _build_nuisance_basis(
-            nuisance, poly_degree, smooth_terms_ft, smooth_term_bounds_ft,
+            nuisance, smooth_term_bounds_ft,
             gam_df_ft, verbose, spline_constructors=spline_constructors
         )
     n_Z = nuisance.shape[1]

@@ -46,7 +46,6 @@ def run_sweep(
     apply_2step_correction: bool = True,
     seed: int | None = None,
     verbose: bool = True,
-    use_gam: bool = True,
     gam_df: int = 6,
 ) -> dict:
     """
@@ -65,17 +64,16 @@ def run_sweep(
     apply_2step_correction : apply Zhao correction to ComCAT output
     seed          : base random seed (each cell gets seed + cell_index)
     verbose       : print progress
-    use_gam       : include ComCAT-GAM (B-spline nuisance) as a third arm (default True)
     gam_df        : B-spline basis dimension per nuisance term (default 6)
 
     Returns
     -------
     results : dict with keys
-        'D'   : ndarray shape (n_a2, n_a4, n_nuis, n_methods)  — mean Cohen's D
-        'FPR' : ndarray shape (n_a2, n_a4, n_nuis, n_methods)  — false-positive rate
-               n_methods = 2 (AnCova, ComCAT-poly) or 3 (+ ComCAT-GAM)
+        'D'   : ndarray shape (n_a2, n_a4, n_nuis, 2)  — mean Cohen's D
+        'FPR' : ndarray shape (n_a2, n_a4, n_nuis, 2)  — false-positive rate
+               2 methods: [AnCova, ComCAT (GAM)]
         'a2_values', 'a4_values', 'n_nuisance_values', 'a1', 'n', 'n_sim',
-        'mean_only', 'apply_2step_correction', 'use_gam'
+        'mean_only', 'apply_2step_correction'
     """
     if a2_values is None:
         a2_values = list(np.arange(0.0, 0.3, 0.05))
@@ -87,7 +85,7 @@ def run_sweep(
     n_a2   = len(a2_values)
     n_a4   = len(a4_values)
     n_nuis = len(n_nuisance_values)
-    n_methods = 3 if use_gam else 2
+    n_methods = 2   # [AnCova, ComCAT (GAM)]
 
     D   = np.zeros((n_a2, n_a4, n_nuis, n_methods))
     FPR = np.zeros((n_a2, n_a4, n_nuis, n_methods))
@@ -116,7 +114,6 @@ def run_sweep(
                     no_fig=True,
                     apply_2step_correction=apply_2step_correction,
                     seed=cell_seed,
-                    use_gam=use_gam,
                     gam_df=gam_df,
                 )
                 D  [j, k, m, :] = avgD
@@ -125,7 +122,6 @@ def run_sweep(
     return dict(
         D=D,
         FPR=FPR,
-        use_gam=int(use_gam),
         a2_values=np.array(a2_values),
         a4_values=np.array(a4_values),
         n_nuisance_values=np.array(n_nuisance_values),
@@ -174,7 +170,7 @@ def plot_summary(results: dict) -> None:
     a4v = np.asarray(results['a4_values']).ravel()
     n_nuisance_values = np.asarray(results['n_nuisance_values']).ravel()
 
-    method_labels = ['AnCova (GLM)', 'ComCAT polynomial', 'ComCAT GAM']
+    method_labels = ['AnCova (GLM)', 'ComCAT (GAM)']
     n_nuis = len(n_nuisance_values)
 
     n_methods = D.shape[3]
@@ -255,8 +251,6 @@ def main():
                         help="Output .mat filename (auto-generated if omitted).")
     parser.add_argument("--no-fig", action="store_true",
                         help="Suppress summary plots.")
-    parser.add_argument("--no-gam", action="store_true",
-                        help="Skip ComCAT-GAM arm (B-spline nuisance modeling).")
     parser.add_argument("--gam-df", type=int, default=6,
                         help="B-spline basis dimension per nuisance term for GAM.")
 
@@ -276,7 +270,6 @@ def main():
         mean_only=args.mean_only,
         apply_2step_correction=not args.no_2step,
         seed=args.seed,
-        use_gam=not args.no_gam,
         gam_df=args.gam_df,
     )
 

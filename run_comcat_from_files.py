@@ -143,10 +143,8 @@ PRESERVE_FILE = SAMPLES[SAMPLE]["preserve_file"]
 
 # ComCAT options
 MEAN_ONLY    = False   # True → adjust mean only, skip variance scaling
-POLY_DEGREE  = 2       # polynomial degree (used only when SMOOTH_TERMS=None)
-SMOOTH_TERMS = 'all'   # 'all' = B-spline GAM for all nuisance columns;
-                       # None  = polynomial expansion; [0, 2] = GAM for cols 0 & 2
-GAM_DF       = None    # None = auto: min(15, max(5, n//30)); set an int to override
+GAM_DF       = None    # B-spline df per nuisance column;
+                       # None = auto: min(10, max(5, n//30)); set an int to override
 SAVE_ESTIMATES = False # save additive (gamma) and multiplicative (delta) estimates
 
 # ---------------------------------------------------------------------------
@@ -191,8 +189,6 @@ for mat_file in MAT_FILES:
         nuisance       = nuisance,
         preserve       = preserve,
         mean_only      = MEAN_ONLY,
-        poly_degree    = POLY_DEGREE,
-        smooth_terms   = SMOOTH_TERMS,
         gam_df         = GAM_DF,
         save_estimates = SAVE_ESTIMATES,
         verbose        = True,
