@@ -1,11 +1,6 @@
 """
 ComCAT: Combating CovariATe effects — core harmonization function.
 
-MIT License
-Copyright (c) 2020 Jean-Philippe Fortin
-Heavily modified and extended by Christian Gaser, Robert Dahnke
-Python port: 2026
-
 Usage
 -----
 from comcat import comcat
@@ -58,16 +53,6 @@ GAM smoothness recommendations
 -------------------------------
 The B-spline basis uses cubic splines (degree=3) with `gam_df` columns
 (= n_internal_knots + degree + 1 with intercept in statsmodels convention).
-
-Typical `gam_df` choices by covariate type:
-
-| Covariate             | Recommended gam_df | Notes                              |
-|-----------------------|--------------------|------------------------------------|
-| Age (20–90 yr)        | 6 – 8              | Gentle non-linear growth curves    |
-| TIV / ICV (cm³)       | 5 – 7              | Moderate curvature expected        |
-| Continuous score      | 5 – 6              | Unless strong curvature suspected  |
-| Cortical thickness    | 6 – 8              | Similar to age                     |
-| General rule          | max(5, n // 30)    | Cap at 10 for any sample size      |
 
 Practical guidelines:
 - `gam_df=None` (default) uses the sample-size heuristic min(10, max(5, n//30)):
@@ -178,14 +163,12 @@ def comcat(
     # ------------------------------------------------------------------ mask
     sd0 = np.std(Y, axis=1, ddof=1)
     ind_mask = (sd0 > 0) & np.isfinite(sd0)
-    #avg = np.mean(Y, axis=1)
-    #ind_mask = (sd0 > np.max(avg)/100) & np.isfinite(sd0)
     ind_nan = np.isnan(sd0)
 
-    Ym = Y[ind_mask, :]          # (n_valid, n_subjects)
+    Ym = Y[ind_mask, :]              # (n_valid, n_subjects)
 
     # ------------------------------------------------ nuisance basis expansion
-    n_nuisance_orig = n_Z          # columns before expansion (needed for from_training)
+    n_nuisance_orig = n_Z            # columns before expansion (needed for from_training)
     nuisance_orig = nuisance.copy()  # keep original columns for confounding diagnostics
     if n_Z > 0:
         if verbose:
@@ -572,10 +555,10 @@ def comcat_from_training(
     preserve = _to_col_matrix(preserve, n_subjects)
 
     # Nuisance basis expansion — same configuration as training
-    smooth_terms_ft      = estimates.get('smooth_terms')
+    smooth_terms_ft       = estimates.get('smooth_terms')
     smooth_term_bounds_ft = estimates.get('smooth_term_bounds')
-    gam_df_ft            = estimates.get('gam_df', poly_degree)
-    spline_constructors  = estimates.get('spline_constructors', {})
+    gam_df_ft             = estimates.get('gam_df', poly_degree)
+    spline_constructors   = estimates.get('spline_constructors', {})
     if n_nuisance_orig > 0:
         nuisance, _ = _build_nuisance_basis(
             nuisance, poly_degree, smooth_terms_ft, smooth_term_bounds_ft,
