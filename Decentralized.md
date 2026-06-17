@@ -32,9 +32,8 @@ and is the reference this module reproduces.
 
 - **One batch per site.** Each site holds exactly one batch/scanner (the topology
   from Bostami et al. 2022). Per-batch variance is therefore computed locally.
-- **GAM B-splines only** (Mode A). Smooth nuisance terms use B-splines; the
-  polynomial nuisance path is *not* decentralized. This matches ComCAT's default
-  (`smooth_terms='all'`).
+- **GAM B-splines only** (Mode A). Every nuisance column is modelled with a
+  B-spline GAM, matching centralized ComCAT (which always uses GAM).
 - **`ref_batch` is not supported** in this module (all sites are harmonized to the
   pooled grand mean). Everything else — `preserve` covariates, `mean_only`,
   the common feature mask — works as in `comcat()`.

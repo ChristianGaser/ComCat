@@ -19,7 +19,7 @@ ComCAT is a Python toolkit for **harmonizing multi-site neuroimaging data**. It 
 - [Core API — `comcat.py`](#core-api--comcatpy)
   - [`comcat()` — harmonize data](#comcat--harmonize-data)
   - [`comcat_from_training()` — apply to new data](#comcat_from_training--apply-to-new-data)
-  - [Nuisance modelling: GAM vs. polynomial](#nuisance-modelling-gam-vs-polynomial)
+  - [Nuisance modelling: B-spline GAM](#nuisance-modelling-b-spline-gam)
 - [File I/O Interface — `comcat_ui.py`](#file-io-interface--comcat_uipy)
   - [Python usage](#python-usage)
   - [Command-line usage](#command-line-usage)
@@ -40,7 +40,7 @@ ComCAT is a Python toolkit for **harmonizing multi-site neuroimaging data**. It 
 ComCAT implements a harmonization model that:
 
 1. **Removes additive and multiplicative batch effects** (scanner / site differences).
-2. **Regresses out nuisance covariates** (e.g., image quality metrics, total intracranial volume) using either polynomial expansion or B-spline GAM smoothing.
+2. **Regresses out nuisance covariates** (e.g., image quality metrics, total intracranial volume) using B-spline GAM smoothing.
 3. **Preserves biological covariates of interest** (e.g., age, group) so they are not inadvertently removed.
 
 The method is equivalent to ComBat when only batch correction is requested (except that no emprical Bayes is implemented), and extends it with flexible nuisance modelling when covariates are provided.
@@ -63,7 +63,7 @@ pip install -r requirements.txt
 | `numpy>=1.22` | Yes | Array operations |
 | `scipy>=1.8` | Yes | `.mat` file I/O (v5–v7.2), stats |
 | `nibabel>=4.0` | Yes | NIfTI / GIFTI file I/O |
-| `statsmodels>=0.13` | Yes | B-spline GAM for `smooth_terms` |
+| `statsmodels>=0.13` | Yes | B-spline GAM for nuisance modelling |
 | `h5py>=3.0` | Yes | MATLAB v7.3 `.mat` files |
 | `matplotlib>=3.5` | Yes | Plots in simulation tools |
 
@@ -102,7 +102,6 @@ Y_harmonized, beta_hat, gamma_hat, delta_hat = comcat(
     nuisance,    # (n_subjects, n_nuisance) variables to remove  — or None
     preserve,    # (n_subjects, n_preserve) variables to keep    — or None
     mean_only=False,
-    poly_degree=2,
     verbose=True,
 )
 ```
@@ -121,12 +120,10 @@ Y_harmonized, beta_hat, gamma_hat, delta_hat = comcat(
 | Parameter | Default | Description |
 |---|---|---|
 | `mean_only` | `False` | Adjust mean only; skip variance scaling |
-| `poly_degree` | `2` | Polynomial expansion degree for nuisance (when GAM is off) |
 | `ref_batch` | `None` | Site label to treat as reference (its data is left untouched) |
 | `return_estimates` | `False` | Return a 5th element (dict) for use with `comcat_from_training()` |
-| `smooth_terms` | `'all'` | Nuisance columns to model with B-spline GAM (see below) |
-| `smooth_term_bounds` | `None` | Explicit boundary knots for splines |
-| `gam_df` | `None` | B-spline basis dimension per term (auto-selected if `None`) |
+| `smooth_term_bounds` | `None` | Explicit boundary knots for the nuisance splines |
+| `gam_df` | `None` | B-spline basis dimension per nuisance column (auto-selected if `None`) |
 | `verbose` | `False` | Print progress messages |
 
 **Single-site / nuisance-only mode**
@@ -156,15 +153,12 @@ Y_test_harm = comcat_from_training(
 > [!IMPORTANT]
 > When using train/test workflows, always specify `smooth_term_bounds` so knot positions are identical between training and new data.
 
-### Nuisance modelling: GAM vs. polynomial
+### Nuisance modelling: B-spline GAM
 
-ComCAT supports two modes for modelling non-linear nuisance effects:
-
-| Mode | Setting | Notes |
-|---|---|---|
-| B-spline GAM | `smooth_terms='all'` (default) | Flexible non-linear fit; requires `statsmodels` |
-| Selective GAM | `smooth_terms=[0, 2]` | GAM for listed columns, polynomial for the rest |
-| Polynomial only | `smooth_terms=None` | Falls back gracefully if `statsmodels` is absent |
+Every nuisance column is always modelled with a B-spline GAM (a flexible
+non-linear fit; `statsmodels` is required). There is no linear or polynomial
+option. The GAM is configured with `gam_df` (basis dimension) and, for
+train/test workflows, `smooth_term_bounds` (explicit knot bounds).
 
 **Recommended `gam_df` values by covariate type**
 
@@ -199,7 +193,6 @@ Y_harmonized, gamma_hat, delta_hat = comcat_ui(
     nuisance       = nuisance,
     preserve       = preserve,
     mean_only      = False,
-    poly_degree    = 2,
     save_estimates = True,
     verbose        = True,
 )
@@ -227,7 +220,7 @@ Harmonized files are saved into an auto-generated subfolder next to the input fi
 ```
 comcat_sites_preserve1_nuisance1_gam6/
 combat_sites/
-comcat_nuisance2_poly2/
+comcat_nuisance2_linear/
 ```
 
 Override the folder name with the `subfolder` parameter. For MAT/TXT files, the output file is placed inside the subfolder with the same file name.
@@ -289,10 +282,9 @@ avgD, FPR = simulate_comcat(
     n_sim=500,
     n_nuisance=1,
     mean_only=True,
-    use_gam=True,   # include ComCAT-GAM (B-splines) as a third comparison arm
-    gam_df=6,
+    gam_df=6,       # B-spline basis dimension per nuisance term (GAM always on)
 )
-# avgD / FPR shape: (3,) → [AnCova, ComCAT-poly, ComCAT-GAM]
+# avgD / FPR shape: (2,) → [AnCova, ComCAT (GAM)]
 ```
 
 The simulation applies an optional **Zhao et al. two-step correction** (`apply_2step_correction=True` by default) to pre-whiten harmonized data and correct for degrees-of-freedom inflation introduced by ComCAT.
@@ -337,8 +329,8 @@ Three test cases are covered:
 
 | Case | Configuration |
 |---|---|
-| Case 1 | Multi-site, nuisance + preserve, `poly_degree=2` |
-| Case 2 | Single site, polynomial nuisance, `mean_only=True` |
+| Case 1 | Multi-site, linear nuisance + preserve |
+| Case 2 | Single site, linear nuisance, `mean_only=True` |
 | Case 3 | Multi-site, B-spline GAM nuisance (requires `statsmodels`) |
 
 ---
@@ -409,13 +401,11 @@ comcat(
     nuisance       = None,      # (n_subjects, n_nuisance)
     preserve       = None,      # (n_subjects, n_preserve)
     mean_only      = False,     # True → mean correction only
-    poly_degree    = 2,         # polynomial degree (when smooth_terms=None)
     verbose        = False,
     ref_batch      = None,      # reference site label (left untouched)
     return_estimates = False,   # return fitted parameter dict
-    smooth_terms   = 'all',     # 'all' | None | list of column indices
     smooth_term_bounds = None,  # (lo, hi) or [(lo0,hi0), ...] or None
-    gam_df         = None,      # B-spline df; None = auto
+    gam_df         = None,      # B-spline df per nuisance column; None = auto
 )
 ```
 
@@ -428,11 +418,9 @@ comcat_ui(
     nuisance       = None,      # (n_subjects, n_nuisance)
     preserve       = None,      # (n_subjects, n_preserve)
     mean_only      = False,
-    poly_degree    = 2,
     subfolder      = None,      # override auto-generated output folder name
     save_estimates = False,     # save gamma/delta estimates alongside data
     verbose        = True,
-    smooth_terms   = 'all',
     smooth_term_bounds = None,
     gam_df         = None,
 )
