@@ -59,10 +59,9 @@ Practical guidelines:
   knot positions are identical between training and new data.
 """
 
-from __future__ import annotations
-
 import numpy as np
 from numpy.linalg import pinv
+from statsmodels.gam.api import BSplines
 
 
 # ---------------------------------------------------------------------------
@@ -397,14 +396,6 @@ def _build_nuisance_basis(
 
     if n_cols == 0:
         return np.empty((nuisance.shape[0], 0), dtype=np.float64), new_constructors
-
-    try:
-        from statsmodels.gam.api import BSplines
-    except ImportError as exc:
-        raise ImportError(
-            "statsmodels is required for ComCAT nuisance modelling (B-spline GAM). "
-            "Install with:  pip install statsmodels"
-        ) from exc
 
     parts = []
     for i in range(n_cols):

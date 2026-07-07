@@ -35,11 +35,7 @@ from comcat import comcat, comcat_from_training
 # .mat reference files (MATLAB-generated) are looked for next to this script
 DATA_DIR = _HERE
 
-try:
-    import statsmodels  # noqa: F401
-    HAS_STATSMODELS = True
-except ImportError:
-    HAS_STATSMODELS = False
+import statsmodels 
 
 # Tolerances
 ATOL = 1e-4
@@ -221,10 +217,6 @@ def test_from_training():
 # Test 6 — GAM removes nonlinear nuisance while preserving the covariate of interest
 # ---------------------------------------------------------------------------
 def test_gam_smoothing():
-    if not HAS_STATSMODELS:
-        print("Case 6: SKIPPED (statsmodels not installed)")
-        return
-
     print("Case 6: GAM nuisance modelling — nonlinear nuisance removal")
     rng = np.random.default_rng(99)
     n, V = 200, 300
@@ -272,10 +264,6 @@ def test_gam_smoothing():
 # Test 7 — GAM from_training: apply pre-fitted splines to held-out data
 # ---------------------------------------------------------------------------
 def test_gam_from_training():
-    if not HAS_STATSMODELS:
-        print("Case 7: SKIPPED (statsmodels not installed)")
-        return
-
     print("Case 7: GAM from_training — held-out subjects match direct call")
     d = load("test_case1.mat")
     Y, batch, Z, X = d['Y1'], d['batch1'].astype(int), d['Z1'], d['X1']
