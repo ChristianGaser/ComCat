@@ -120,6 +120,7 @@ def _collect_files(args) -> list[str]:
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     files = _collect_files(argv)
+    print(LIST_IQM)
     if not files:
         print("No files matching '^cat.*\\.xml$' found.", file=sys.stderr)
         return 1
