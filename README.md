@@ -20,16 +20,18 @@ ComCAT is a Python toolkit for **harmonizing multi-site neuroimaging data**. It 
   - [`comcat()` — harmonize data](#comcat--harmonize-data)
   - [`comcat_from_training()` — apply to new data](#comcat_from_training--apply-to-new-data)
   - [Nuisance modelling: B-spline GAM](#nuisance-modelling-b-spline-gam)
+  - [Optional model extensions](#optional-model-extensions)
 - [File I/O Interface — `comcat_ui.py`](#file-io-interface--comcat_uipy)
   - [Python usage](#python-usage)
   - [Command-line usage](#command-line-usage)
   - [Supported file formats](#supported-file-formats)
   - [Output naming](#output-naming)
 - [Batch Processing — `run_comcat_from_files.py`](#batch-processing--run_comcat_from_filespy)
+- [Comparison Methods — CovBat, ComBatLS, ComBat (EB)](#comparison-methods--covbat-combatls-combat-eb)
 - [Simulation Tools](#simulation-tools)
   - [`simulate_comcat.py`](#simulate_comcatpy)
   - [`simulate_comcat_ui.py`](#simulate_comcat_uipy)
-- [Testing — `test_comcat_py.py`](#testing--test_comcat_pypy)
+- [Testing](#testing)
 - [Common Workflows](#common-workflows)
 - [Parameter Reference](#parameter-reference)
 
@@ -80,8 +82,12 @@ Add the repository directory to your Python path or pass it via `sys.path.insert
 | `run_comcat_from_files.py` | Example/template script for processing multiple datasets |
 | `simulate_comcat.py` | Monte-Carlo simulation comparing ComCAT vs GLM AnCova |
 | `simulate_comcat_ui.py` | Parameter sweep over simulation conditions |
+| `combat_family.py` | CovBat, ComBatLS and ComBat with empirical Bayes (port of the R package ComBatFamily) |
+| `combat_family_ui.py` | Same file interface as `comcat_ui.py` for these methods + CLI |
+| `run_combat_family_from_files.py` | Template script running them on the ComCAT inputs |
 | `decentralized_comcat.py` | Experimental decentralized/federated harmonization (sites never pool raw data) — see **[Decentralized.md](Decentralized.md)** |
 | `tests/test_comcat_py.py` | Numerical validation against MATLAB reference output |
+| `tests/test_combat_family.py` | Tests for `combat_family.py`, incl. comparison with R ComBatFamily |
 
 > **Decentralized / federated use:** to harmonize data split across sites that
 > cannot share raw data, see **[Decentralized.md](Decentralized.md)**. The result
@@ -170,6 +176,60 @@ train/test workflows, `smooth_term_bounds` (explicit knot bounds).
 | General rule | `max(5, n // 30)`, capped at 10 |
 
 When `gam_df=None` (default), the value is auto-selected as `min(10, max(5, n // 30))`.
+
+### Optional model extensions
+
+Three options extend the model. All are **off by default**: without them, `comcat()`
+and `comcat_ui()` give bit-identical results to earlier versions. The maths is in
+[ComCat-Theory.md](ComCat-Theory.md#optional-extensions), and the behaviour is tested in
+`tests/test_comcat_options.py`.
+
+| Option | Default | What it does | Output folder suffix |
+|---|---|---|---|
+| `preserve_df` | `None` (linear) | B-spline expansion of continuous preserve covariates (int, or `'same'` = `gam_df`). Columns with fewer than `preserve_df` + 2 distinct values (group, sex) stay linear. | `_preserve<n>_gam<df>` |
+| `preserve_bounds` | `None` | Boundary knots for the preserve splines, like `smooth_term_bounds` but per preserve column. Required by `comcat_from_training()` when new data exceed the training range. | — |
+| `residual_delta` | `False` | Estimate site variances δ after removing the additive site **and** nuisance effects, as ComBat does. | `_resdelta` |
+| `nuisance_scale` | `False` | Also remove nuisance-dependent variance (heteroscedasticity) with a log-linear variance model per feature; implies `residual_delta`. | `_scale` |
+
+**`preserve_df` — preserve non-linear effects of interest.** Nuisance columns are
+spline-expanded, and preserve columns are linear by default. When an IQM depends
+non-linearly on age (e.g. more motion in children and older adults), the IQM splines
+can represent the non-linear part of the age effect, and ComCAT then removes it. In a
+simulated lifespan setting with seven such IQMs, ~70–80% of the age curve was lost
+with a linear age term, against ~5% with `preserve_df='same'`. This matters most for
+wide age ranges (e.g. the normative sample) and hardly at all for narrow ones.
+
+**`residual_delta` — site variances from residuals.** By default (as in the MATLAB
+implementation), δ is the within-site variance of data that still contain the
+nuisance effects. The adjusted residuals are divided by it, so their variance shrinks
+to about `1 − R²` of the within-site nuisance fit. On ON-Harmony (8 mm, 7 IQMs) the
+residual variance of the harmonized data is 42% of the model residual variance at
+`gam_df=5`, and 13% at `gam_df=10`. On Tohoku (one subject, 121 scans) IQM removal
+alone leaves 23% of the scan-to-scan variance, and the δ step reduces this further to
+5%. Because the shrinkage grows with `gam_df`, it is worth checking results that
+depend on individual variance (e.g. BrainAGE MAE) with `residual_delta=True`. Only
+`mean_only=True` avoids the effect, and `comcat_ui()` treats a missing `batch` as one
+site, so single-site runs are affected too.
+
+**`nuisance_scale` — remove quality-dependent noise.** The residuals of every feature
+are modelled as `log sd = site + IQMs + preserve` (raw columns, z-scored, linear) by
+maximum likelihood. Each subject's residual is then rescaled to the noise level at the
+mean IQM value. Site and preserve terms stay in the variance model: site variance
+differences are removed afterwards by δ, and biological effects on the variance
+(e.g. of age) are preserved. The fit also yields a per-feature likelihood-ratio test
+of IQM effects on the variance (`estimates['scale_lr']`, `estimates['scale_p']`,
+χ² with `estimates['scale_lr_df']` df). With `save_estimates=True`, `comcat_ui()`
+saves these as `scale_lr` / `scale_p` maps and prints the share of features with
+p < 0.05. This is a direct test of the heteroscedasticity assumption.
+
+```python
+Y_harm, *_, est = comcat(Y, batch, nuisance=iqm, preserve=age[:, None],
+                         preserve_df='same', nuisance_scale=True,
+                         return_estimates=True)
+print(np.nanmean(est['scale_p'] < 0.05))   # share of features with IQM-dependent variance
+```
+
+These options are not available in `decentralized_comcat.py`.
 
 ---
 
@@ -266,6 +326,59 @@ python run_comcat_from_files.py
 
 ---
 
+## Comparison Methods — CovBat, ComBatLS, ComBat (EB)
+
+For comparisons with established harmonization methods, `combat_family.py`
+implements three members of the ComBat family. The code is a NumPy port of
+the reference R package [ComBatFamily](https://github.com/andy1764/ComBatFamily)
+(v0.2.2) that fits all features at once instead of looping over them:
+
+| Function | R equivalent | Method |
+|---|---|---|
+| `combat_eb()` | `comfam(model = lm)` | ComBat with empirical Bayes (Johnson et al., 2007; Fortin et al., 2018) |
+| `covbat()` | `covfam(model = lm)` | CovBat: ComBat followed by harmonization of PC scores, which removes site effects in the covariance between features (Chen et al., 2022, *Hum Brain Mapp* 43:1179) |
+| `combatls()` | `combatls(..., sigma.formula = ~ covariates)` | ComBatLS: covariate effects on the mean **and** the variance are modelled (normal GAMLSS) and preserved (Gardner et al., 2025, *Hum Brain Mapp* 46:e70197) |
+
+`tests/test_combat_family.py` compares the output with the R package when
+`Rscript` and ComBatFamily are available; the harmonized data agree to
+~1e-13 for ComBat and CovBat and to ~5e-7 for ComBatLS, where `gamlss` stops
+on a deviance criterion slightly before the maximum-likelihood solution.
+
+`combat_family_ui.py` uses the file I/O of `comcat_ui.py`, so the same inputs
+can be passed unchanged:
+
+```python
+from combat_family_ui import covbat_ui, combatls_ui, combat_eb_ui
+
+covbat_ui(["data.mat"], batch=site, preserve=age)       # PCs explaining 95% of variance
+combatls_ui(["data.mat"], batch=site, preserve=age)     # log(sigma) ~ age
+combat_eb_ui(["data.mat"], batch=site, preserve=age)
+```
+
+```bash
+python combat_family_ui.py covbat data.mat --batch scanner.txt --preserve age.txt
+python combat_family_ui.py --help
+```
+
+Each call returns `(Y_harmonized, gamma_star, delta_star)` and saves the result
+in a subfolder named `covbat_*`, `combatls_*` or `combateb_*`, so ComCAT's
+`comcat_*` / `combat_*` results are never overwritten.
+
+Differences from `comcat_ui()`:
+
+- **At least two sites are required.** These methods only remove site effects.
+- **`nuisance` is ignored (with a warning).** Every covariate in these models is
+  preserved; none of them can remove covariate effects such as IQMs.
+- **Preserved covariates enter linearly**, as in ComCAT. ComBatLS models
+  log(sigma) with the preserved covariates by default (`scale=` to change);
+  batch is not part of the variance model, as in the ComBatLS paper.
+- Empirical Bayes is on by default (`eb=False` gives the plain L/S model).
+
+`run_combat_family_from_files.py` runs all three methods on the samples of
+`run_comcat_from_files.py` that have site labels.
+
+---
+
 ## Simulation Tools
 
 ### `simulate_comcat.py`
@@ -311,7 +424,15 @@ Results are stored as arrays of shape `(n_a2, n_a4, n_nuisance, n_methods)` for 
 
 ---
 
-## Testing — `test_comcat_py.py`
+## Testing
+
+| Script | Needs | Tests |
+|---|---|---|
+| `tests/test_comcat_py.py` | MATLAB reference files | Python port vs `comcat.m` (below) |
+| `tests/test_comcat_options.py` | — | Optional extensions on simulated data with known effects; defaults unchanged; `comcat_from_training()` reproduces the in-sample result |
+| `tests/test_combat_family.py` | R + ComBatFamily (optional) | CovBat / ComBatLS / ComBat-EB properties and agreement with the R package |
+
+### `test_comcat_py.py`
 
 Validates that `comcat.py` produces results numerically identical to the MATLAB reference implementation within float32 tolerances (`atol=1e-4`, `rtol=1e-4`).
 
@@ -406,6 +527,10 @@ comcat(
     return_estimates = False,   # return fitted parameter dict
     smooth_term_bounds = None,  # (lo, hi) or [(lo0,hi0), ...] or None
     gam_df         = None,      # B-spline df per nuisance column; None = auto
+    preserve_df    = None,      # B-spline df for continuous preserve columns; 'same' = gam_df
+    preserve_bounds = None,     # (lo, hi) or [(lo0,hi0), ...] per preserve column
+    nuisance_scale = False,     # also remove nuisance-dependent variance
+    residual_delta = False,     # site variances from residuals (as ComBat)
 )
 ```
 
@@ -423,6 +548,10 @@ comcat_ui(
     verbose        = True,
     smooth_term_bounds = None,
     gam_df         = None,
+    preserve_df    = None,
+    preserve_bounds = None,
+    nuisance_scale = False,
+    residual_delta = False,
 )
 ```
 

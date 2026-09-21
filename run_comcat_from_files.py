@@ -147,6 +147,15 @@ GAM_DF       = None    # B-spline df per nuisance column;
                        # None = auto: min(10, max(5, n//30)); set an int to override
 SAVE_ESTIMATES = False # save additive (gamma) and multiplicative (delta) estimates
 
+# Optional model extensions (see README "Optional model extensions");
+# the defaults reproduce the original ComCAT results
+PRESERVE_DF    = None  # B-spline df for continuous preserve covariates:
+                       # None = linear, 'same' = GAM_DF, or an int
+NUISANCE_SCALE = False # also remove nuisance-dependent variance (heteroscedasticity);
+                       # with SAVE_ESTIMATES the per-feature test is saved (scale_lr/scale_p)
+RESIDUAL_DELTA = False # estimate site variances after removing nuisance effects
+                       # (as ComBat); implied by NUISANCE_SCALE
+
 # ---------------------------------------------------------------------------
 # Load covariates from text files
 # ---------------------------------------------------------------------------
@@ -192,6 +201,9 @@ for mat_file in MAT_FILES:
         gam_df         = GAM_DF,
         save_estimates = SAVE_ESTIMATES,
         verbose        = True,
+        preserve_df    = PRESERVE_DF,
+        nuisance_scale = NUISANCE_SCALE,
+        residual_delta = RESIDUAL_DELTA,
     )
 
     print(f"Harmonized data shape: {Y_harmonized.shape}")

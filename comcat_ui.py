@@ -136,7 +136,12 @@ def _build_subfolder(
     n_preserve: int,
     mean_only: bool,
     gam_df: int | None = None,
+    preserve_df: int | None = None,
+    nuisance_scale: bool = False,
+    residual_delta: bool = False,
 ) -> str:
+    """Folder name encoding the settings; defaults give the names used before
+    the optional extensions existed."""
     if n_sites > 1 and n_nuisance == 0:
         sf = 'combat'
     else:
@@ -145,10 +150,16 @@ def _build_subfolder(
         sf += f'_sites'
     if n_preserve > 0:
         sf += f'_preserve{n_preserve}'
+        if preserve_df is not None:
+            sf += f'_gam{preserve_df}'
     if mean_only:
         sf += '_meanonly'
     if n_nuisance > 0:
         sf += f'_nuisance{n_nuisance}_gam{gam_df}'
+        if nuisance_scale:
+            sf += '_scale'                 # implies residual site variances
+        elif residual_delta and not mean_only:
+            sf += '_resdelta'
     return sf
 
 
@@ -172,6 +183,10 @@ def comcat_ui(
     verbose: bool = True,
     smooth_term_bounds=None,
     gam_df: int | None = None,
+    preserve_df: int | str | None = None,
+    preserve_bounds=None,
+    nuisance_scale: bool = False,
+    residual_delta: bool = False,
 ):
     """
     Run ComCAT on a list of image/data files and save harmonized results.
@@ -192,6 +207,16 @@ def comcat_ui(
     smooth_term_bounds : boundary knots; None infers from data (fine for single-dataset use).
     gam_df        : B-spline basis dimension per nuisance column.
                     None (default) — auto-selected from sample size: min(10, max(5, n//30)).
+
+    Optional extensions (off by default; see comcat.py for details)
+    preserve_df   : B-spline df for continuous preserve covariates; 'same' = gam_df.
+                    Output folder gets '_preserve<n>_gam<df>'.
+    preserve_bounds : boundary knots for the preserve splines (per preserve column).
+    nuisance_scale: also remove nuisance-dependent variance.  Folder suffix '_scale'.
+                    With save_estimates, the per-feature likelihood-ratio test of
+                    nuisance effects on the variance is saved as scale_lr / scale_p.
+    residual_delta: estimate site variances after removing nuisance effects (as in
+                    ComBat).  Folder suffix '_resdelta'.
     """
     if not files:
         raise ValueError("No input files provided.")
@@ -275,12 +300,23 @@ def comcat_ui(
     if gam_df is None:
         gam_df = min(10, max(5, n_subjects // 30))
 
-    Y_adj, beta_hat, gamma_hat, delta_hat = comcat(
+    if preserve_df == 'same':
+        preserve_df = gam_df
+
+    Y_adj, beta_hat, gamma_hat, delta_hat, estimates = comcat(
         Y, batch_coded, nuisance, preserve,
         mean_only=mean_only, verbose=verbose,
         smooth_term_bounds=smooth_term_bounds,
         gam_df=gam_df,
+        preserve_df=preserve_df,
+        preserve_bounds=preserve_bounds,
+        nuisance_scale=nuisance_scale,
+        residual_delta=residual_delta,
+        return_estimates=True,
     )
+    nuisance_scale = estimates['nuisance_scale'] is not None   # False without nuisance
+    options = dict(preserve_df=preserve_df, nuisance_scale=nuisance_scale,
+                   residual_delta=residual_delta)
 
     # guard against extreme variance changes (factor > 10)
     sd0 = np.std(Y, axis=1, ddof=1) if Y.ndim == 2 else np.std(Y, axis=0, ddof=1)
@@ -298,6 +334,7 @@ def comcat_ui(
     if subfolder is None:
         subfolder = _build_subfolder(
             n_sites, n_nuisance_cols, n_preserve_cols, mean_only, gam_df=gam_df,
+            **options,
         )
 
     pth = str(Path(files[0]).parent)
@@ -319,8 +356,12 @@ def comcat_ui(
                 filetype == 'gifti'
             )
 
+        if save_estimates and nuisance_scale:
+            _save_scale_test(estimates, str(Path(pth) / subfolder), filetype,
+                             meta[0], verbose)
+
         # save log mat
-        _save_log_mat(pth, subfolder, batch, nuisance, preserve, gam_df)
+        _save_log_mat(pth, subfolder, batch, nuisance, preserve, gam_df, **options)
 
     elif filetype == 'mat':
         out_dir = Path(pth) / subfolder
@@ -347,7 +388,11 @@ def comcat_ui(
                 if verbose:
                     print(f"Saved {dname} (multiplicative effects)")
 
-        _save_log_mat(str(out_dir), subfolder, batch, nuisance, preserve, gam_df)
+        if save_estimates and nuisance_scale:
+            _save_scale_test(estimates, str(out_dir), filetype, None, verbose)
+
+        _save_log_mat(str(out_dir), subfolder, batch, nuisance, preserve, gam_df,
+                      **options)
 
     else:  # txt / csv
         out_dir = Path(pth) / subfolder
@@ -369,7 +414,11 @@ def comcat_ui(
                 dname = out_dir / f"delta{i+1:02d}{ext}"
                 np.savetxt(str(dname), delta_hat[i, :][None, :], fmt='%g')
 
-        _save_log_mat(str(out_dir), subfolder, batch, nuisance, preserve, gam_df)
+        if save_estimates and nuisance_scale:
+            _save_scale_test(estimates, str(out_dir), filetype, None, verbose)
+
+        _save_log_mat(str(out_dir), subfolder, batch, nuisance, preserve, gam_df,
+                      **options)
 
     if verbose:
         print()
@@ -406,7 +455,35 @@ def _save_estimates_nifti(gamma_hat, delta_hat, pth, ref_img, is_gifti: bool):
         nib.save(img, fname)
 
 
-def _save_log_mat(pth, subfolder, batch, nuisance, preserve, gam_df=6):
+def _save_scale_test(estimates, out_dir, filetype, ref_img, verbose):
+    """Save the likelihood-ratio test of nuisance effects on the variance
+    (nuisance_scale option): scale_lr = chi-square statistic with
+    estimates['scale_lr_df'] degrees of freedom, scale_p = p-value."""
+    import nibabel as nib
+    for key in ('scale_lr', 'scale_p'):
+        arr = estimates[key]
+        if filetype == 'nifti':
+            fname = os.path.join(out_dir, f"{key}.nii.gz")
+            nib.save(ref_img.__class__(arr.reshape(ref_img.shape).astype(np.float32),
+                                       ref_img.affine, ref_img.header), fname)
+        elif filetype == 'gifti':
+            import nibabel.gifti as ngi
+            fname = os.path.join(out_dir, f"{key}.gii")
+            nib.save(ngi.GiftiImage(darrays=[ngi.GiftiDataArray(arr.astype(np.float32))]),
+                     fname)
+        else:
+            fname = os.path.join(out_dir, f"{key}.txt")
+            np.savetxt(fname, arr[None, :], fmt='%g')
+        if verbose:
+            print(f"Saved {fname}")
+    if verbose:
+        frac = np.nanmean(estimates['scale_p'] < 0.05)
+        print(f"Nuisance effect on variance: p < 0.05 (uncorrected) in "
+              f"{100 * frac:.1f}% of features (chi2, df={estimates['scale_lr_df']})")
+
+
+def _save_log_mat(pth, subfolder, batch, nuisance, preserve, gam_df=6,
+                  preserve_df=None, nuisance_scale=False, residual_delta=False):
     """Save a .mat log file with ComCAT parameters (mirrors MATLAB behaviour)."""
     try:
         from scipy.io import savemat
@@ -415,6 +492,9 @@ def _save_log_mat(pth, subfolder, batch, nuisance, preserve, gam_df=6):
             'nuisance':   np.array(nuisance),
             'preserve':   np.array(preserve),
             'gam_df':     int(gam_df),
+            'preserve_df':    -1 if preserve_df is None else int(preserve_df),
+            'nuisance_scale': int(nuisance_scale),
+            'residual_delta': int(residual_delta or nuisance_scale),
         }
         savemat(os.path.join(pth, subfolder + '.mat'), {'Comcat': log})
     except ImportError:
@@ -447,6 +527,13 @@ def _build_parser() -> argparse.ArgumentParser:
                    help='Adjust mean only (no variance scaling).')
     p.add_argument('--gam-df', type=int, default=6, metavar='N',
                    help='B-spline basis dimension per nuisance term (default: 6).')
+    p.add_argument('--preserve-df', default=None, metavar='N|same',
+                   help='B-spline df for continuous preserve covariates '
+                        "('same' = gam-df; default: linear).")
+    p.add_argument('--nuisance-scale', action='store_true',
+                   help='Also remove nuisance-dependent variance.')
+    p.add_argument('--residual-delta', action='store_true',
+                   help='Estimate site variances after removing nuisance effects.')
     p.add_argument('--subfolder', default=None,
                    help='Override auto-generated output subfolder name.')
     p.add_argument('--save-estimates', action='store_true',
@@ -473,6 +560,10 @@ def main(argv=None):
         save_estimates=args.save_estimates,
         verbose=not args.quiet,
         gam_df=args.gam_df,
+        preserve_df=(args.preserve_df if args.preserve_df in (None, 'same')
+                     else int(args.preserve_df)),
+        nuisance_scale=args.nuisance_scale,
+        residual_delta=args.residual_delta,
     )
 
 
