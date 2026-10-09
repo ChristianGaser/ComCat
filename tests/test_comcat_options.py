@@ -189,6 +189,39 @@ def test_from_training_reproduces_in_sample():
         check(f"from_training == comcat  {opts}", err < 1e-8, f"max_abs={err:.1e}")
 
 
+def test_ref_batch_with_nuisance():
+    print("ref_batch with nuisance: harmonized sites match the untouched reference site")
+    Y, batch, z, age, *_ = simulate()
+    rng = np.random.default_rng(1)
+    zs = (z[:, 0] - z.mean()) / z.std()
+    Y = Y + 0.5 * np.outer(rng.uniform(0.5, 1.5, Y.shape[0]), zs)   # IQM effect on the mean
+    # second IQM with many ties (like res_RMS): repeated spline knots make the
+    # design matrix rank-deficient
+    z2 = np.maximum(rng.normal(size=len(batch)), 0.3)
+    Z = np.column_stack([z[:, 0], z2])
+    bounds = [(Z[:, j].min(), Z[:, j].max()) for j in range(Z.shape[1])]
+    Yh, *_, est = comcat(Y, batch, Z, age, gam_df=6, preserve_df='same', ref_batch=0,
+                         smooth_term_bounds=bounds, preserve_bounds=[(age.min(), age.max())],
+                         return_estimates=True)
+    ref = batch == 0
+    check("harmonized data finite and bounded",
+          np.all(np.isfinite(Yh)) and np.abs(Yh).max() < 2 * np.abs(Y).max(),
+          f"max_abs={np.abs(Yh).max():.3g} (input {np.abs(Y).max():.3g})")
+    check("reference site unchanged", np.max(np.abs(Yh[:, ref] - Y[:, ref])) < 1e-10)
+
+    # after removing the common age effect, every site's mean must match the mean
+    # of the reference site, which still contains its own nuisance effects
+    def site_offset(D):
+        R = residuals_around_age(D, age[:, 0])
+        return max(np.mean(np.abs(R[:, batch == b].mean(1) - R[:, ref].mean(1))) for b in (1, 2))
+    before, after = site_offset(Y), site_offset(Yh)
+    check("site means match the reference", after < 0.15 and after < 0.2 * before,
+          f"mean |offset| {after:.3f} (before {before:.3f})")
+    Yft = comcat_from_training(Y, batch, Z, age, estimates=est)
+    err = np.max(np.abs(Yh - Yft))
+    check("from_training == comcat", err < 1e-8, f"max_abs={err:.1e}")
+
+
 if __name__ == '__main__':
     tests = [v for k, v in list(globals().items()) if k.startswith('test_')]
     for t in tests:
