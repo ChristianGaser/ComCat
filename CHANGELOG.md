@@ -48,6 +48,18 @@ sites + nuisance + preserve, nuisance only, sites only, `mean_only`, `ref_batch`
   settings.
 - `tests/test_comcat_options.py`: simulations with known effects for each option.
 
+### Fixed
+
+- `ref_batch` together with `nuisance`: the harmonized sites were aligned to the
+  intercept of the reference site, i.e. to its level at the zero of the nuisance
+  spline basis instead of at its own nuisance values, which left an offset against
+  the untouched reference data. When the nuisance splines are collinear with the site
+  indicators (e.g. an IQM with many tied values, such as `res_RMS`, gives repeated
+  knots), this intercept is not identified and the harmonized data reached ±1e11.
+  The target level is now the mean fitted site + nuisance level of the reference
+  site. Without `ref_batch`, or with `ref_batch` but no nuisance, the output is
+  unchanged (identical, or within 1e-13). Test: `test_ref_batch_with_nuisance`.
+
 ### Documentation
 
 - `ComCat-Theory.md`: new section *Optional extensions* with the model and the

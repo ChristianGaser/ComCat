@@ -29,7 +29,8 @@ delta_hat    : ndarray  — multiplicative batch effects (full feature space)
 Additional parameters
 ---------------------
 ref_batch            : label of a site to use as reference (its data is left untouched;
-                       all other sites are harmonized relative to it). Default None.
+                       all other sites are harmonized to its mean level, including its
+                       mean nuisance level). Default None.
 return_estimates     : if True, a 5th element (dict) with all fitted parameters is
                        returned; pass it to comcat_from_training() for new data.
 Every nuisance column is always modelled with a B-spline GAM (requires
@@ -280,11 +281,17 @@ def comcat(
     beta_hat = pinv(XZ) @ Ym.T   # (n_cols, n_valid)
 
     XZ_no_preserve = XZ[:, list(range(n_batch)) + list(range(n_batch, n_batch + n_Z))]
+    fitted_site = XZ_no_preserve @ beta_hat[:n_batch + n_Z, :]   # site + nuisance part of the fit
     if ref_level is not None:
-        # grand mean = intercept of the reference batch
-        grand_mean = beta_hat[ref_level, :].copy()
+        # grand mean = mean site + nuisance level of the reference batch.  The
+        # intercept of the reference batch alone is its level at the zero of the
+        # nuisance basis, and it is not identified when the nuisance splines are
+        # collinear with the batch indicators (e.g. tied IQM values); the mean
+        # fitted level is identified and matches the untouched reference data.
+        grand_mean = np.mean(fitted_site[batches[ref_level]], axis=0)
     else:
-        grand_mean = np.mean(XZ_no_preserve @ beta_hat[:n_batch + n_Z, :], axis=0)
+        grand_mean = np.mean(fitted_site, axis=0)
+    del fitted_site
 
     residuals = Ym - (XZ @ beta_hat).T   # (n_valid, n_subjects)
     std_pooled = np.sqrt(np.mean(residuals ** 2, axis=1))   # (n_valid,)
