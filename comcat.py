@@ -30,7 +30,7 @@ Additional parameters
 ---------------------
 ref_batch            : label of a site to use as reference (its data is left untouched;
                        all other sites are harmonized to its mean level, including its
-                       mean nuisance level). Default None.
+                       mean nuisance level, and to its variance delta). Default None.
 return_estimates     : if True, a 5th element (dict) with all fitted parameters is
                        returned; pass it to comcat_from_training() for new data.
 Every nuisance column is always modelled with a B-spline GAM (requires
@@ -64,7 +64,9 @@ nuisance_scale       : bool (default False)
                        level.  Site and preserve variance effects stay in the model,
                        so preserved effects on the variance are kept.  Implies
                        residual_delta=True.  estimates['scale_lr'] holds a per-feature
-                       likelihood-ratio test of the nuisance variance effects.
+                       likelihood-ratio test of the nuisance variance effects,
+                       studentized by the residual kurtosis (estimates['scale_kurtosis'])
+                       so that it also holds for skewed or heavy-tailed residuals.
 residual_delta       : bool (default False)
                        Estimate site variances delta from the residuals after the
                        additive site AND nuisance effects are removed, as ComBat does.
@@ -88,6 +90,8 @@ Practical guidelines:
 - Always set `smooth_term_bounds` explicitly in train/test workflows so the
   knot positions are identical between training and new data.
 """
+
+from __future__ import annotations
 
 import warnings
 
@@ -362,11 +366,16 @@ def comcat(
             print(f"[ComCAT] Reference batch: index {ref_level} "
                   f"({levels_original[ref_level]!r}) — left unchanged")
 
+    # with a reference batch, the other batches are scaled to its variance
+    # instead of the pooled one, so that they match the untouched reference data
+    delta_ref = delta_hat_masked[ref_level, :] if ref_level is not None else None
+
     for i in range(n_batch):
         if ref_level is not None and i == ref_level:
             continue  # reference batch is not adjusted
         idx = batches[i]
-        denom = np.sqrt(delta_hat_masked[i, :])[:, None] * np.ones((1, n_batches[i]))
+        delta_i = delta_hat_masked[i, :] if delta_ref is None else delta_hat_masked[i, :] / delta_ref
+        denom = np.sqrt(delta_i)[:, None] * np.ones((1, n_batches[i]))
         if resid_std is not None:
             numer = resid_std[:, idx]
         else:
@@ -434,11 +443,12 @@ def comcat(
     }
     if scale_model is not None:
         # per-feature test of nuisance effects on the variance, full feature space
-        for key in ('scale_lr', 'scale_p'):
+        for key in ('scale_lr', 'scale_p', 'scale_kurtosis'):
             full = np.full(n_features, np.nan)
             full[ind_mask] = scale_model[key]
             estimates[key] = full
         estimates['scale_lr_df'] = scale_model['lr_df']
+        estimates['scale_resid_df'] = scale_model['resid_df']
     return Y_harmonized, beta_hat_full, gamma_hat, delta_hat, estimates
 
 
@@ -649,6 +659,23 @@ def _fit_log_scale(E, W, max_iter=100, tol=1e-8, max_elements=20_000_000):
     return theta, deviance, converged
 
 
+def _pearson_dispersion(E, W, theta, df, max_elements=20_000_000):
+    """Pearson estimate sum((u^2 - 1)^2) / df of Var(u^2) for the standardized
+    residuals u = E / exp(W theta) of every feature (2 for normal residuals).
+
+    E (n_features, n_subjects), W (n_subjects, k), theta (k, n_features);
+    features are processed in chunks as in _fit_log_scale.
+    """
+    p, n = E.shape
+    phi = np.empty(p)
+    step = max(1, max_elements // n)
+    for start in range(0, p, step):
+        cols = slice(start, start + step)
+        u2 = E[cols].T ** 2 * np.exp(-2 * np.clip(W @ theta[:, cols], -300, 300))
+        phi[cols] = np.sum((u2 - 1) ** 2, axis=0) / df
+    return phi
+
+
 def _fit_nuisance_scale(resid, batchmod, nuisance_raw, preserve_raw):
     """Nuisance-dependent variance of the residuals (nuisance_scale option).
 
@@ -659,11 +686,21 @@ def _fit_nuisance_scale(resid, batchmod, nuisance_raw, preserve_raw):
     nuisance covariates.  The reduced model without z gives a
     likelihood-ratio test of nuisance effects on the variance.
 
+    The deviance difference assumes Var(u^2) = 2 for the standardized
+    residuals u, which holds only for normal residuals; in general it is
+    Var(u^2) / 2 times a chi-square variable (kurtosis - 1 = Var(u^2)).  It is
+    therefore divided by the Pearson estimate of Var(u^2) / 2 under H0, from
+    the residuals standardized by the reduced model, as in the studentized
+    Breusch-Pagan test (Koenker, 1981), and compared with an F distribution
+    (quasi-likelihood F test).  For normal residuals the statistic is about
+    the deviance difference.
+
     Returns a dict with theta_z (n_z, n_valid), the z-scoring parameters,
-    the per-feature LR statistic 'scale_lr', its p-value 'scale_p'
-    (chi-square with 'lr_df' degrees of freedom) and 'converged'.
+    the per-feature studentized LR statistic 'scale_lr', its p-value 'scale_p'
+    (F distribution of scale_lr / lr_df with lr_df and resid_df degrees of
+    freedom), the residual kurtosis 1 + Var(u^2) 'scale_kurtosis' and 'converged'.
     """
-    from scipy.stats import chi2
+    from scipy.stats import f as f_dist
 
     Zs, z_mean, z_sd = _standardize_columns(nuisance_raw)
     Xs = _standardize_columns(preserve_raw)[0]
@@ -671,7 +708,7 @@ def _fit_nuisance_scale(resid, batchmod, nuisance_raw, preserve_raw):
     W0 = np.hstack([batchmod, Xs])
 
     theta1, dev1, conv1 = _fit_log_scale(resid, W1)
-    _, dev0, conv0 = _fit_log_scale(resid, W0)
+    theta0, dev0, conv0 = _fit_log_scale(resid, W0)
     converged = conv1 & conv0
     if not np.all(converged):
         warnings.warn(
@@ -679,16 +716,22 @@ def _fit_nuisance_scale(resid, batchmod, nuisance_raw, preserve_raw):
             f"{int(np.sum(~converged))} feature(s).", RuntimeWarning, stacklevel=3,
         )
 
-    lr_df = int(np.linalg.matrix_rank(W1) - np.linalg.matrix_rank(W0))
-    lr = np.maximum(dev0 - dev1, 0.0)
+    rank0 = int(np.linalg.matrix_rank(W0))
+    lr_df = int(np.linalg.matrix_rank(W1)) - rank0
+    resid_df = max(resid.shape[1] - rank0, 1)
+    phi = _pearson_dispersion(resid, W0, theta0, resid_df)
+    lr = np.maximum(dev0 - dev1, 0.0) * 2 / np.maximum(phi, 1e-12)
     n_b = batchmod.shape[1]
     return {
         'theta_z':   theta1[n_b:n_b + Zs.shape[1]],
         'z_mean':    z_mean,
         'z_sd':      z_sd,
         'scale_lr':  lr,
-        'scale_p':   chi2.sf(lr, lr_df) if lr_df > 0 else np.ones_like(lr),
+        'scale_p':   (f_dist.sf(lr / lr_df, lr_df, resid_df) if lr_df > 0
+                      else np.ones_like(lr)),
+        'scale_kurtosis': 1 + phi,
         'lr_df':     lr_df,
+        'resid_df':  resid_df,
         'converged': converged,
     }
 
@@ -826,6 +869,7 @@ def comcat_from_training(
                     if scale_model is not None else None)
 
     batches_new = [np.where(batch_idx == i)[0] for i in range(n_batch)]
+    delta_ref = delta_hat_masked[ref_level, :] if ref_level is not None else None
     Ym_adj = Ym_std.copy()
     for i in range(n_batch):
         idx = batches_new[i]
@@ -833,7 +877,8 @@ def comcat_from_training(
             continue
         if ref_level is not None and i == ref_level:
             continue
-        denom = np.sqrt(delta_hat_masked[i, :])[:, None] * np.ones((1, len(idx)))
+        delta_i = delta_hat_masked[i, :] if delta_ref is None else delta_hat_masked[i, :] / delta_ref
+        denom = np.sqrt(delta_i)[:, None] * np.ones((1, len(idx)))
         numer = Ym_std[:, idx] - (X_nuisance_new[idx, :] @ gamma_hat_masked).T
         if scale_factor is not None:
             numer /= scale_factor[:, idx]

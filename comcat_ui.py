@@ -214,7 +214,9 @@ def comcat_ui(
     preserve_bounds : boundary knots for the preserve splines (per preserve column).
     nuisance_scale: also remove nuisance-dependent variance.  Folder suffix '_scale'.
                     With save_estimates, the per-feature likelihood-ratio test of
-                    nuisance effects on the variance is saved as scale_lr / scale_p.
+                    nuisance effects on the variance is saved as scale_lr / scale_p,
+                    with the residual kurtosis used for its studentization
+                    (scale_kurtosis).
     residual_delta: estimate site variances after removing nuisance effects (as in
                     ComBat).  Folder suffix '_resdelta'.
     """
@@ -457,10 +459,12 @@ def _save_estimates_nifti(gamma_hat, delta_hat, pth, ref_img, is_gifti: bool):
 
 def _save_scale_test(estimates, out_dir, filetype, ref_img, verbose):
     """Save the likelihood-ratio test of nuisance effects on the variance
-    (nuisance_scale option): scale_lr = chi-square statistic with
-    estimates['scale_lr_df'] degrees of freedom, scale_p = p-value."""
+    (nuisance_scale option): scale_lr = studentized LR statistic,
+    scale_p = p-value of scale_lr / df1 under F(df1, df2) with
+    df1 = estimates['scale_lr_df'] and df2 = estimates['scale_resid_df'],
+    scale_kurtosis = residual kurtosis used for the studentization."""
     import nibabel as nib
-    for key in ('scale_lr', 'scale_p'):
+    for key in ('scale_lr', 'scale_p', 'scale_kurtosis'):
         arr = estimates[key]
         if filetype == 'nifti':
             fname = os.path.join(out_dir, f"{key}.nii.gz")
@@ -479,7 +483,8 @@ def _save_scale_test(estimates, out_dir, filetype, ref_img, verbose):
     if verbose:
         frac = np.nanmean(estimates['scale_p'] < 0.05)
         print(f"Nuisance effect on variance: p < 0.05 (uncorrected) in "
-              f"{100 * frac:.1f}% of features (chi2, df={estimates['scale_lr_df']})")
+              f"{100 * frac:.1f}% of features (studentized LR, "
+              f"F({estimates['scale_lr_df']}, {estimates['scale_resid_df']}))")
 
 
 def _save_log_mat(pth, subfolder, batch, nuisance, preserve, gam_df=6,
