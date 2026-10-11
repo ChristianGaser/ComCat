@@ -126,7 +126,7 @@ Y_harmonized, beta_hat, gamma_hat, delta_hat = comcat(
 | Parameter | Default | Description |
 |---|---|---|
 | `mean_only` | `False` | Adjust mean only; skip variance scaling |
-| `ref_batch` | `None` | Site label to treat as reference (its data is left untouched) |
+| `ref_batch` | `None` | Site label to treat as reference (its data is left untouched; the other sites are harmonized to its mean and variance) |
 | `return_estimates` | `False` | Return a 5th element (dict) for use with `comcat_from_training()` |
 | `smooth_term_bounds` | `None` | Explicit boundary knots for the nuisance splines |
 | `gam_df` | `None` | B-spline basis dimension per nuisance column (auto-selected if `None`) |
@@ -217,10 +217,28 @@ maximum likelihood. Each subject's residual is then rescaled to the noise level 
 mean IQM value. Site and preserve terms stay in the variance model: site variance
 differences are removed afterwards by δ, and biological effects on the variance
 (e.g. of age) are preserved. The fit also yields a per-feature likelihood-ratio test
-of IQM effects on the variance (`estimates['scale_lr']`, `estimates['scale_p']`,
-χ² with `estimates['scale_lr_df']` df). With `save_estimates=True`, `comcat_ui()`
-saves these as `scale_lr` / `scale_p` maps and prints the share of features with
-p < 0.05. This is a direct test of the heteroscedasticity assumption.
+of IQM effects on the variance (`estimates['scale_lr']`, `estimates['scale_p']`).
+With `save_estimates=True`, `comcat_ui()` saves these as `scale_lr` / `scale_p` maps,
+together with `scale_kurtosis`, and prints the share of features with p < 0.05. This
+is a direct test of the heteroscedasticity assumption.
+
+The plain likelihood-ratio test assumes normal residuals. With skewed or heavy-tailed
+residuals it is too liberal: on gray matter at 8 mm (2,241 subjects, real residual
+shapes, three random IQMs without any effect on the variance) it gave p < 0.05 for 12%
+of the voxels, and for 37% of the voxels with |skewness| > 1. The statistic is
+therefore studentized by the kurtosis of the residuals (`estimates['scale_kurtosis']`),
+as in Koenker's version of the Breusch–Pagan test, and compared with an F distribution
+(`scale_lr / scale_lr_df` with `estimates['scale_lr_df']` and
+`estimates['scale_resid_df']` df). In the same data this gave 5.0%. For normal
+residuals the kurtosis is about 3 and the statistic stays as before.
+
+In small samples with many nuisance columns, the test is too liberal even for normal
+residuals, because the residuals of a large mean model are fewer independent values
+than subjects. In simulations with the design of ON-Harmony (80 scans, 6 sites,
+7 IQMs, `gam_df=5`, i.e. 42 mean-model columns), about 14% of the features had
+p < 0.05 under the null hypothesis (8.5% with `gam_df=4`), and the estimated IQM
+effect on the log SD was less than half of the true one. Use the test as a guide in
+such samples.
 
 ```python
 Y_harm, *_, est = comcat(Y, batch, nuisance=iqm, preserve=age[:, None],

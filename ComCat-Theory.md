@@ -79,6 +79,19 @@ $$Y_{jv}^{\text{ComCat}} = Y_{jv}^{\text{adj}} \cdot \text{RMSE}_v + \bar{\mu}_v
 This restores the original data scale while preserving the biological effects encoded in $\mathbf{X}$.
 
 
+#### Reference site
+
+With a reference site $r$ (`ref_batch`), the data of site $r$ are left unchanged and the other sites are harmonized to it. The grand mean is the mean fitted site and nuisance level of site $r$,
+
+$$\bar{\mu}_v = \frac{1}{N_r} \sum_{j \in r} [\mathbf{B}\ \tilde{\mathbf{Z}}]_j \hat{\boldsymbol{\beta}}_{[\text{batch},Z],v},$$
+
+and the other sites are scaled to the variance of site $r$ instead of the pooled variance:
+
+$$Y_{v,\text{batch}=i}^{\text{adj}} = \frac{Y_{v,\text{batch}=i}^{\text{std}} - [\mathbf{B}\ \tilde{\mathbf{Z}}]_{\text{batch}=i}\hat{\gamma}_v}{\sqrt{\hat{\delta}_{i,v}^2 / \hat{\delta}_{r,v}^2}}$$
+
+With `residual_delta` (see *Optional extensions*), the residual variance of every harmonized site then equals that of the reference site. With the default $\hat{\delta}$, this holds only if the nuisance terms explain the same share of the within-site variance at both sites.
+
+
 #### Optional extensions
 
 Three extensions can be enabled in `comcat()` / `comcat_ui()`. All are off by default; the default output is identical to the model described above.
@@ -111,7 +124,13 @@ $$e^{*}_{jv} = e_{jv}\,\exp\left(-\mathbf{z}^{*}_j\hat{\boldsymbol{\theta}}_{Z,v
 
 which rescales every subject to the noise level at the mean nuisance value ($\mathbf{z}^{*} = 0$). Site and preserved-covariate terms stay in the variance model. Site variance differences are therefore not attributed to the nuisance covariates, and they are removed afterwards by $\hat{\delta}$, now estimated from $e^{*}$ (this option implies `residual_delta`). Biological effects on the variance are retained.
 
-The same fit provides a per-feature likelihood-ratio test of nuisance effects on the variance: $\Lambda_v = D_{0,v} - D_{1,v}$, the deviance difference between the models without and with $\mathbf{z}^{*}$, which is asymptotically $\chi^2_Q$ under $H_0: \boldsymbol{\theta}_{Z,v} = 0$ (returned as `scale_lr` and `scale_p`).
+The same fit provides a per-feature likelihood-ratio test of nuisance effects on the variance. The deviance difference $\Lambda_v = D_{0,v} - D_{1,v}$ between the models without and with $\mathbf{z}^{*}$ is asymptotically $\chi^2_Q$ under $H_0: \boldsymbol{\theta}_{Z,v} = 0$ only for normal residuals. For standardized residuals $u = e/\sigma$ with kurtosis $\kappa$, $\text{Var}(u^2) = \kappa - 1$, and $\Lambda_v$ is $(\kappa - 1)/2$ times a $\chi^2_Q$ variable, so skewed or heavy-tailed residuals inflate it. It is therefore studentized as in Koenker's (1981) version of the Breusch–Pagan test,
+
+$$\Lambda^{*}_v = \frac{2\Lambda_v}{\hat{\kappa}_v - 1}, \qquad \hat{\kappa}_v - 1 = \frac{1}{N - \text{rank}(\mathbf{W}_0)} \sum_{j=1}^{N} \left(\hat{u}_{0,jv}^2 - 1\right)^2,$$
+
+where $\hat{u}_0$ are the residuals standardized by the variance model under $H_0$, whose design $\mathbf{W}_0$ contains the site and preserved-covariate terms. $\Lambda^{*}_v / Q$ is compared with an $F(Q,\ N - \text{rank}(\mathbf{W}_0))$ distribution, the quasi-likelihood F test (McCullagh and Nelder, 1989). $\Lambda^{*}_v$, its p-value and $\hat{\kappa}_v$ are returned as `scale_lr`, `scale_p` and `scale_kurtosis`. For normal residuals $\hat{\kappa}_v \approx 3$ and $\Lambda^{*}_v \approx \Lambda_v$. The kurtosis is estimated under $H_0$ because residuals standardized by the full model vary less where $\mathbf{z}^{*}$ happens to fit the variance; this made the test liberal in small samples.
+
+In gray matter at 8 mm (2,241 subjects, real residual shapes, three random nuisance variables without effect on the variance), $\Lambda_v$ gave $p < 0.05$ in 12.2% of the voxels (37% of those with |skewness| > 1), and $\Lambda^{*}_v$ in 5.0%. When the mean model has many columns relative to $N$, the residuals contain fewer than $N$ independent values, and the test is liberal for normal residuals as well: in simulations with $N = 80$ and 42 mean-model columns, about 14% of the features had $p < 0.05$ under $H_0$, and $\hat{\boldsymbol{\theta}}_Z$ was attenuated.
 
 The variance model is the one of ComBatLS (Gardner et al., 2025), used for the opposite purpose. ComBatLS models covariate effects on the scale in order to *preserve* them; here, nuisance effects on the scale are modelled in order to *remove* them, while preserved-covariate effects on the scale are kept.
 
@@ -124,4 +143,8 @@ Fortin JP, Parker D, Tunç B, Watanabe T, Elliott MA, Ruparel K, et al. (2017). 
 Gardner M, Shinohara RT, Bethlehem RAI, Romero-Garcia R, Warrier V, Dorfschmidt L, et al. (2025). ComBatLS: A location- and scale-preserving method for multi-site image harmonization. *Human Brain Mapping*, 46(8), e70197.
 
 Johnson WE, Li C, Rabinovic A (2007). Adjusting batch effects in microarray expression data using empirical Bayes methods. *Biostatistics*, 8(1), 118–127.
+
+Koenker R (1981). A note on studentizing a test for heteroscedasticity. *Journal of Econometrics*, 17(1), 107–112.
+
+McCullagh P, Nelder JA (1989). *Generalized Linear Models*, 2nd ed. Chapman and Hall, London.
 
