@@ -148,6 +148,9 @@ def test_ui_mat_roundtrip():
 # 2. Agreement with R ComBatFamily
 # ---------------------------------------------------------------------------
 
+R_PACKAGE_MISSING = 3      # exit status of combat_family_reference.R
+
+
 def _rscript():
     return os.environ.get('COMBATFAMILY_RSCRIPT') or shutil.which('Rscript')
 
@@ -168,10 +171,10 @@ def test_against_R():
             [rscript, os.path.join(_HERE, 'combat_family_reference.R'), tmp],
             capture_output=True, text=True,
         )
+        if res.returncode == R_PACKAGE_MISSING:
+            print(f"  [SKIP] {res.stderr.strip()}")
+            return
         if res.returncode != 0:
-            if 'there is no package' in res.stderr:
-                print("  [SKIP] R package ComBatFamily not installed")
-                return
             raise RuntimeError(res.stderr)
 
         def ref(name):

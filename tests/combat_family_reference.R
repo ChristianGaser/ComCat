@@ -6,6 +6,16 @@
 # no header).  Harmonized data are written to <dir>/r_<method>.csv.
 #
 # Requires: remotes::install_github("andy1764/ComBatFamily")  (pulls in gamlss)
+# Exits with status 3 if a required package is missing; the test then skips.
+
+# requireNamespace() instead of the error of library(), whose message is
+# translated into the language of the R session
+pkgs <- c("ComBatFamily", "gamlss")
+absent <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
+if (length(absent) > 0) {
+  message("R package(s) not installed: ", paste(absent, collapse = ", "))
+  quit(save = "no", status = 3)
+}
 
 suppressPackageStartupMessages({
   library(ComBatFamily)

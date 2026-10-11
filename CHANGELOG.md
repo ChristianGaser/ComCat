@@ -81,6 +81,10 @@ sites + nuisance + preserve, nuisance only, sites only, `mean_only`, `ref_batch`
   supports: annotations such as `np.ndarray | None` were evaluated when the functions
   were defined. Added `from __future__ import annotations`; the tests pass with
   Python 3.9.13.
+- `tests/test_combat_family.py` failed instead of skipping the comparison with R when
+  ComBatFamily was not installed and R did not run in English, because it searched
+  the translated error message. `combat_family_reference.R` now checks the packages
+  with `requireNamespace()` and exits with status 3, which the test skips.
 
 ### Documentation
 
