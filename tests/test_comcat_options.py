@@ -2,8 +2,8 @@
 test_comcat_options.py
 ======================
 Tests for the optional ComCAT extensions preserve_df, nuisance_scale and
-residual_delta (comcat.py).  Unlike test_comcat_py.py, no MATLAB reference
-files are needed: data are simulated with known effects.
+residual_delta, and for ref_batch (comcat.py).  Unlike test_comcat_py.py, no
+MATLAB reference files are needed: data are simulated with known effects.
 
 Simulations
 -----------
@@ -12,8 +12,9 @@ simulate() (nuisance_scale, LR test, from_training):
   mean:      non-linear (quadratic) age effect; z has NO effect on the mean
   variance:  noise SD grows with z (nuisance heteroscedasticity, to remove)
              and with age (biological, to preserve)
+  noise:     normal, heavy-tailed (t5) or skewed (chi-square), see noise()
   sites:     additive and multiplicative effects
-preserve_df and residual_delta tests build their own data (see there).
+preserve_df, residual_delta and ref_batch tests build their own data (see there).
 
 Run:
     python tests/test_comcat_options.py
@@ -24,6 +25,7 @@ import sys
 import warnings
 
 import numpy as np
+from scipy.stats import chi2
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(_HERE))
@@ -38,7 +40,19 @@ def check(name, cond, detail=""):
         raise AssertionError(f"{name} {detail}")
 
 
-def simulate(n_per_site=150, p=300, z_scale=0.35, seed=0):
+def noise(rng, shape, kind='normal'):
+    """Noise with unit variance: normal, heavy-tailed ('t5', excess kurtosis 6)
+    or skewed ('chi2', 4 df: skewness 1.4, excess kurtosis 3)."""
+    if kind == 'normal':
+        return rng.normal(size=shape)
+    if kind == 't5':
+        return rng.standard_t(5, size=shape) / np.sqrt(5 / 3)
+    if kind == 'chi2':
+        return (rng.chisquare(4, size=shape) - 4) / np.sqrt(8)
+    raise ValueError(kind)
+
+
+def simulate(n_per_site=150, p=300, z_scale=0.35, seed=0, kind='normal'):
     rng = np.random.default_rng(seed)
     n = 3 * n_per_site
     batch = np.repeat([0, 1, 2], n_per_site)
@@ -51,7 +65,7 @@ def simulate(n_per_site=150, p=300, z_scale=0.35, seed=0):
     load = rng.uniform(0.5, 1.5, p)
     sd = np.exp(z_scale * zs + 0.15 * a)             # nuisance + biological variance
     Y = (curve[:, None] * load
-         + sd[:, None] * rng.normal(size=(n, p))
+         + sd[:, None] * noise(rng, (n, p), kind)
          + rng.normal(size=(3, p))[batch]            # additive site effects
          )
     site_scale = np.array([0.8, 1.0, 1.3])[batch]
@@ -173,6 +187,21 @@ def test_scale_lr_test():
         else:
             check("effect: most features p < 0.05", frac > 0.9, f"{100 * frac:.1f}%")
 
+    # the deviance difference is chi-square only for normal residuals; for
+    # non-normal residuals it is (kurtosis - 1) / 2 times larger, which the
+    # studentized statistic removes
+    for kind in ('t5', 'chi2'):
+        Y, batch, z, age, *_ = simulate(z_scale=0.0, seed=3, kind=kind)
+        est = comcat(Y, batch, z, age, gam_df=6, preserve_df='same',
+                     nuisance_scale=True, return_estimates=True)[4]
+        frac = np.mean(est['scale_p'] < 0.05)
+        lr_plain = est['scale_lr'] * (est['scale_kurtosis'] - 1) / 2
+        frac_plain = np.mean(chi2.sf(lr_plain, est['scale_lr_df']) < 0.05)
+        check(f"null, {kind} noise: ~5% of features p < 0.05", 0.01 < frac < 0.10,
+              f"{100 * frac:.1f}%  median kurtosis {np.median(est['scale_kurtosis']):.1f}")
+        check(f"null, {kind} noise: unstudentized LR > 2x nominal level", frac_plain > 0.10,
+              f"{100 * frac_plain:.1f}%")
+
 
 def test_from_training_reproduces_in_sample():
     print("comcat_from_training reproduces the in-sample result with all options")
@@ -220,6 +249,43 @@ def test_ref_batch_with_nuisance():
     Yft = comcat_from_training(Y, batch, Z, age, estimates=est)
     err = np.max(np.abs(Yh - Yft))
     check("from_training == comcat", err < 1e-8, f"max_abs={err:.1e}")
+
+
+def test_ref_batch_variance():
+    print("ref_batch: harmonized sites take the variance of the reference site")
+    # noise SD 1, 2 and 0.5 at the three sites, reference = site 1; without the
+    # reference, all sites would be scaled to the pooled SD of ~1.32
+    rng = np.random.default_rng(2)
+    n_site, p = 200, 300
+    batch = np.repeat([0, 1, 2], n_site)
+    n = batch.size
+    age = rng.uniform(20, 80, n)
+    z = rng.normal(size=n)
+    noise_sd = np.array([1.0, 2.0, 0.5])[batch]
+    Y = (0.03 * age[:, None] + 0.8 * z[:, None] + rng.normal(size=(3, p))[batch]
+         + noise_sd[:, None] * rng.normal(size=(n, p))).T
+
+    def sd_ratio(Yh, covariates):
+        # noise SD of every site relative to the reference site; covariates are
+        # removed within each site, as the reference site keeps its IQM effect
+        sd = []
+        for b in range(3):
+            A = np.column_stack([np.ones(n_site)] + [c[batch == b] for c in covariates])
+            D = Yh[:, batch == b]
+            sd.append(np.median((D - (A @ np.linalg.lstsq(A, D.T, rcond=None)[0]).T).std(1)))
+        return np.array(sd) / sd[1]
+
+    for label, nuis, opts, cov in (("no nuisance", None, {}, (age,)),
+                                   ("nuisance, residual_delta", z[:, None],
+                                    dict(residual_delta=True), (age, z))):
+        Yh, *_, est = comcat(Y, batch, nuis, age[:, None], ref_batch=1,
+                             return_estimates=True, **opts)
+        before, after = sd_ratio(Y, cov), sd_ratio(Yh, cov)
+        check(f"{label}: SD of sites 0, 2 = reference SD", np.all(np.abs(after - 1) < 0.05),
+              f"{after[0]:.3f}, {after[2]:.3f} (before {before[0]:.2f}, {before[2]:.2f})")
+        Yft = comcat_from_training(Y, batch, nuis, age[:, None], estimates=est)
+        err = np.max(np.abs(Yh - Yft))
+        check(f"{label}: from_training == comcat", err < 1e-8, f"max_abs={err:.1e}")
 
 
 if __name__ == '__main__':

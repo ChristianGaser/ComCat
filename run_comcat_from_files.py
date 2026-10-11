@@ -152,7 +152,8 @@ SAVE_ESTIMATES = False # save additive (gamma) and multiplicative (delta) estima
 PRESERVE_DF    = None  # B-spline df for continuous preserve covariates:
                        # None = linear, 'same' = GAM_DF, or an int
 NUISANCE_SCALE = False # also remove nuisance-dependent variance (heteroscedasticity);
-                       # with SAVE_ESTIMATES the per-feature test is saved (scale_lr/scale_p)
+                       # with SAVE_ESTIMATES the per-feature test is saved
+                       # (scale_lr/scale_p/scale_kurtosis)
 RESIDUAL_DELTA = False # estimate site variances after removing nuisance effects
                        # (as ComBat); implied by NUISANCE_SCALE
 
