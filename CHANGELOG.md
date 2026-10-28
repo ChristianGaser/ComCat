@@ -67,6 +67,40 @@
   samples). The location shrinkage then has almost no effect: 0% error reduction in
   Buchert, ABIDE and NormSample, 17% in ON-Harmony, 26% in ADNI. The variance shrinkage is
   unaffected.
+- Scripts: `evaluation/eb_splithalf.py`, `eb_traveling.py`, `eb_impact.py`.
+
+### Added — held-out evaluation
+
+- `HeldOut-Evaluation.md`: the IQM nuisance model on held-out traveling-subject and
+  test–retest data (Tohoku, Buchert, MR-ART, ON-Harmony). It covers the causes, tested
+  alternatives (truncated SVD, ridge penalty chosen by GCV, IQM subsets, linear terms,
+  principal components, IQM effects estimated within subjects, transfer between datasets)
+  and suggested fixes.
+- `evaluation/`: the scripts behind it and behind the empirical Bayes results, with data
+  paths set by environment variables.
+
+### Known issues
+
+- **The IQM nuisance model does not generalize to held-out data.** With the seven CAT12
+  IQMs and the default settings, in-sample vs held-out:
+  - Tohoku: variance 0.09 vs 0.21 of raw.
+  - Buchert: 0.17 vs 348 (median of 10 draws).
+  - ON-Harmony: within-subject variance ×4.35 vs ×163; between-subject variance ×0.29
+    in-sample.
+  - MR-ART: between-subject variance ×0.64 in-sample.
+
+  There are three causes:
+  - an unpenalized spline basis of partly redundant IQMs (SIQR ≈ res_ECR; IQR ≈
+    NCR, ICR, res_RMS), which is rank-deficient or near-singular;
+  - IQM effects estimated across subjects that partly reflect anatomy;
+  - the variance step, which in single-site `comcat_ui` runs rescales all residuals by
+    about 1 − R² of the in-sample fit.
+
+  On held-out data, two things helped. Ridge-penalized or linear IQM terms remove the
+  blow-ups. Estimating the IQM effects within subjects (subject terms, location only) was
+  the only variant that reduced technical variance without removing biology: MR-ART
+  motion bias −87%, ON-Harmony W/T 0.068 vs 0.074 raw. Not fixed; see
+  `HeldOut-Evaluation.md`.
 
 ## Unreleased (2026-09-21)
 

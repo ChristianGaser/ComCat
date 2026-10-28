@@ -2,6 +2,13 @@
 > This project is **currently under construction** and might contain bugs. **If you experience any issues, please [let me know](https://github.com/ChristianGaser/ComCat/issues)!**
 
 > [!CAUTION]
+> **The IQM nuisance correction does not generalize to held-out data.** With the seven
+> CAT12 IQMs, the nuisance model overfits, and the IQM effects it estimates partly reflect
+> anatomy. In traveling-subject and test–retest data, it adds technical variance to
+> held-out scans and removes between-subject (biological) variance, even in-sample.
+> [HeldOut-Evaluation.md](HeldOut-Evaluation.md) has the evidence and suggested fixes.
+
+> [!CAUTION]
 > **Current scope is limited to BrainAGE and normative modelling workflows.**  
 > For general GLM-based group analyses, harmonizing data with ComCAT and then running a standard GLM inflates degrees of freedom and leads to inflated false-positive rates. The two-step correction proposed by Li et al. that addresses this problem is **not yet implemented** in the production pipeline (`comcat_ui.py`). It is only available inside the simulation framework (`simulate_comcat.py`) for evaluation purposes. Until the Li et al. correction is integrated, avoid using ComCAT-harmonized data as input to group-comparison GLMs.
 
@@ -87,6 +94,8 @@ Add the repository directory to your Python path or pass it via `sys.path.insert
 | `combat_family_ui.py` | Same file interface as `comcat_ui.py` for these methods + CLI |
 | `run_combat_family_from_files.py` | Template script running them on the ComCAT inputs |
 | `decentralized_comcat.py` | Experimental decentralized/federated harmonization (sites never pool raw data) — see **[Decentralized.md](Decentralized.md)** |
+| `HeldOut-Evaluation.md` | Known issue: behaviour of the IQM nuisance model on held-out data, causes and suggested fixes |
+| `evaluation/` | Real-data evaluation scripts (held-out IQM model, empirical Bayes) |
 | `tests/test_comcat_py.py` | Numerical validation against MATLAB reference output |
 | `tests/test_combat_family.py` | Tests for `combat_family.py`, incl. comparison with R ComBatFamily |
 

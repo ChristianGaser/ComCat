@@ -21,6 +21,8 @@ $${gam_{df}} = \min\left(10,\ \max\left(5,\ \lfloor N/30 \rfloor\right)\right)$$
 
 The lower bound of 5 ensures that nonlinear shape can be captured even in small samples; the upper bound of 10 limits flexibility to prevent overfitting. The implications of this upper bound for preserving biological group differences are addressed in the Discussion. The expanded nuisance design matrix is denoted $\tilde{\mathbf{Z}}$ with $Q' = Q \cdot d$ columns.
 
+> **Note.** The basis is not penalized. With the seven CAT12 IQMs, which are partly redundant (SIQR ≈ res_ECR; IQR is largely a combination of NCR, ICR and res_RMS), the design is rank-deficient or near-singular. The fit then does not generalize to held-out scans. IQM effects estimated across subjects also partly reflect anatomy. See [HeldOut-Evaluation.md](HeldOut-Evaluation.md).
+
 
 #### Parameter estimation
 
