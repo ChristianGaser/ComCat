@@ -21,7 +21,7 @@ R = int(sys.argv[1]) if len(sys.argv) > 1 else 10
 
 
 def params(Y, site, iqm, age, eb, bounds, w):
-    est = comcat(Y, site, iqm, age, eb=eb, smooth_term_bounds=bounds, return_estimates=True)[4]
+    est = comcat(Y, site, iqm, age, eb=eb, smooth_term_bounds=bounds, return_estimates=True, nuisance_model='spline')[4]
     g = est['gamma_star_masked'] if est['eb'] else est['gamma_hat_masked']
     d = est['delta_star_masked'] if est['eb'] else est['delta_hat_masked']
     K = len(w)

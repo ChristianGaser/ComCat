@@ -360,7 +360,7 @@ def main():
     ok = True
     for eb in (True, False):
         # centralized reference (GAM on age — always applied)
-        Y_central, *_ = comcat(Y, batch, nuisance=age, preserve=score,
+        Y_central, *_ = comcat(Y, batch, nuisance_model='spline', nuisance=age, preserve=score,
                                mean_only=False, verbose=False, eb=eb)
 
         out, est = decentralized_harmonize(site_Y, site_batch_idx, site_nuis,

@@ -49,8 +49,8 @@ return_estimates     : if True, a 5th element (dict) with all fitted parameters 
                        'delta_hat_masked'), the applied empirical Bayes estimates
                        ('gamma_star_masked', 'delta_star_masked') and the priors
                        ('eb_priors').
-Every nuisance column is always modelled with a B-spline GAM (requires
-statsmodels). The GAM is configured by:
+Every nuisance column is modelled as a penalized B-spline (nuisance_model, below;
+statsmodels is needed for the unpenalized 'spline' model). The basis is configured by:
 
 smooth_term_bounds   : boundary knots for the B-spline of each nuisance column.
                        • None  — infer bounds from training data (safe for training only)
@@ -58,8 +58,10 @@ smooth_term_bounds   : boundary knots for the B-spline of each nuisance column.
                        • [(lo0,hi0), (lo1,hi1), ...] — one pair per nuisance column
                        For apply-to-new-data workflows, always specify explicit bounds
                        that cover the full range of training AND test data.
-gam_df               : int, B-spline basis dimension per nuisance column (default None).
-                       Higher values capture finer nonlinearities but risk overfitting.
+gam_df               : int, B-spline basis dimension per nuisance column (default None:
+                       10 for 'pspline', whose penalty sets the smoothness; for the
+                       unpenalized 'spline' min(10, max(5, n//30)), where higher values
+                       capture finer nonlinearities but overfit).
 
 Optional model extensions (all off by default; with eb=False, the defaults
 reproduce earlier results)
@@ -93,9 +95,49 @@ residual_delta       : bool (default False)
                        variance of the harmonized data by roughly
                        var(residual) / (var(residual) + var(nuisance effect)).
 
-GAM smoothness recommendations
--------------------------------
-The B-spline basis uses cubic splines (degree=3) with `gam_df` columns
+Nuisance model, subjects and cross-fitting
+-------------------------------------------------------------------------------
+nuisance_model       : 'pspline' (default) | 'linear' | 'spline'
+                       'spline'  unpenalized cubic B-splines with gam_df columns per
+                                 nuisance column (versions before 2026-10; they
+                                 overfit with several IQMs and do not generalize to
+                                 new scans, see HeldOut-Evaluation.md).
+                       'linear'  every nuisance column enters linearly (z-scored with
+                                 the training mean and SD).
+                       'pspline' penalized cubic B-splines (P-splines): per nuisance
+                                 column one linear term and gam_df - 2 nonlinear terms
+                                 that are shrunk by a second-order difference penalty.
+                                 One smoothing parameter for all nuisance columns is
+                                 estimated from all features (nuisance_penalty), i.e.
+                                 an empirical Bayes estimate of the size of the
+                                 nonlinear nuisance effects across features.  Large
+                                 penalties give the linear model.  gam_df defaults to
+                                 10; new data are evaluated with the nonlinear part at
+                                 the training range (the linear part continues).
+                       With 'linear' and 'pspline', nuisance columns without variation
+                       within the sites (and subjects) are dropped with a warning, and
+                       columns with fewer than gam_df + 2 distinct values stay linear.
+nuisance_penalty     : None | 'reml' | 'gcv' | float  (only 'pspline')
+                       None/'reml': restricted maximum likelihood pooled over the
+                       standardized features; 'gcv': generalized cross-validation
+                       pooled over features; a number fixes the penalty.
+subject              : None | array-like (n_subjects,) of subject labels
+                       For repeated scans of the same subjects (traveling subjects,
+                       test-retest data, scans with and without motion).  Centred
+                       subject indicators are added to the preserved covariates, so
+                       that the site and nuisance effects are estimated from the
+                       variation within subjects and cannot take up anatomy that
+                       differs between subjects.  Implies mean_only=True.
+                       comcat_from_training() treats its subjects as new subjects.
+comcat_crossfit()    : every subject is harmonized with a model that was not fitted
+                       on it (k-fold over subjects), optionally fitted on a subset such
+                       as the controls and applied to all others.
+
+GAM smoothness recommendations (unpenalized 'spline' model)
+--------------------------------------------------------------
+With the default 'pspline' model the smoothness is estimated (REML), and gam_df
+only sets the size of the basis.  For the unpenalized 'spline' model, the B-spline
+basis uses cubic splines (degree=3) with `gam_df` columns
 (= n_internal_knots + degree + 1 with intercept in statsmodels convention).
 
 Practical guidelines:
@@ -115,6 +157,8 @@ import warnings
 import numpy as np
 from numpy.linalg import pinv
 from statsmodels.gam.api import BSplines
+
+_NUISANCE_MODELS = ('spline', 'linear', 'pspline')
 
 
 # ---------------------------------------------------------------------------
@@ -137,16 +181,25 @@ def comcat(
     nuisance_scale: bool = False,
     residual_delta: bool = False,
     eb: bool = True,
+    nuisance_model: str = 'pspline',
+    nuisance_penalty=None,
+    subject=None,
 ):
     """ComCAT harmonization for sites and nuisance parameters.
 
-    See the module docstring for all parameters, including the optional
-    extensions preserve_df, preserve_bounds, nuisance_scale and residual_delta.
+    See the module docstring for all parameters, including the empirical
+    Bayes option eb, the optional extensions preserve_df, preserve_bounds,
+    nuisance_scale and residual_delta, and the nuisance models, subject terms
+    and cross-fitting (nuisance_model, nuisance_penalty, subject).
     """
 
     # ------------------------------------------------------------------ setup
     # Use float64 throughout for numerical precision (MATLAB promotes to double too)
     Y = np.array(Y, dtype=np.float64)
+
+    if nuisance_model not in _NUISANCE_MODELS:
+        raise ValueError(f"nuisance_model must be one of {_NUISANCE_MODELS}, "
+                         f"not {nuisance_model!r}.")
 
     # Handle None/empty batch — determine n_subjects from nuisance/preserve if needed
     batch_empty = (batch is None or np.asarray(batch).size == 0)
@@ -156,7 +209,7 @@ def comcat(
         n_subjects = len(batch)
     else:
         n_subjects = None
-        for arr in (nuisance, preserve):
+        for arr in (nuisance, preserve, subject):
             if arr is not None:
                 a = np.asarray(arr)
                 if a.size > 0:
@@ -187,11 +240,25 @@ def comcat(
 
     n_Z = nuisance.shape[1]
 
-    # Resolve gam_df from sample size when not set explicitly:
-    #   min(10, max(5, n_subjects // 30))
-    if gam_df is None:
-        gam_df = min(10, max(5, n_subjects // 30))
+    # subject terms: effects are estimated within subjects (location only)
+    subject_cols = np.empty((n_subjects, 0))
+    if subject is not None:
+        subject = np.asarray(subject).ravel()
+        if len(subject) != n_subjects:
+            raise ValueError(f"subject has {len(subject)} labels for {n_subjects} subjects.")
+        if nuisance_scale:
+            raise ValueError("nuisance_scale cannot be combined with subject terms.")
+        subject_cols = _subject_design(subject)
         if verbose:
+            print(f"[ComCAT] {subject_cols.shape[1] + 1} subjects: effects estimated "
+                  "within subjects, mean only")
+        mean_only = True
+
+    # Resolve gam_df from sample size when not set explicitly:
+    #   min(10, max(5, n_subjects // 30)); 10 for penalized splines
+    if gam_df is None:
+        gam_df = 10 if nuisance_model == 'pspline' else min(10, max(5, n_subjects // 30))
+        if verbose and nuisance_model != 'linear':
             print(f"[ComCAT] gam_df auto-selected: {gam_df} (n={n_subjects})")
 
     # optional B-spline expansion of continuous preserve covariates
@@ -201,6 +268,7 @@ def comcat(
     preserve, preserve_splines = _build_preserve_basis(
         preserve, preserve_df, preserve_bounds, verbose
     )
+    preserve = np.hstack([preserve, subject_cols])    # subject terms are the last columns
     n_X = preserve.shape[1]
 
     # Y must be (n_features, n_subjects)
@@ -226,15 +294,44 @@ def comcat(
     # ------------------------------------------------ nuisance basis expansion
     n_nuisance_orig = n_Z            # columns before expansion (needed for from_training)
     nuisance_orig = nuisance.copy()  # keep original columns for confounding diagnostics
-    if n_Z > 0:
+    nuisance_keep = np.arange(n_Z)   # columns used (all of them for 'spline')
+    nuisance_setup = None            # basis of 'linear' and 'pspline' (for from_training)
+    pen_nuisance = np.zeros(0, dtype=bool)   # penalized columns of the nuisance basis
+    spline_constructors = {}
+    if n_Z > 0 and nuisance_model == 'spline':
         if verbose:
             print(f"[ComCAT] GAM (B-spline, df={gam_df}) for all {n_Z} nuisance column(s)")
         nuisance, spline_constructors = _build_nuisance_basis(
             nuisance, smooth_term_bounds, gam_df, verbose
         )
         n_Z = nuisance.shape[1]
-    else:
-        spline_constructors = {}
+    elif n_Z > 0:
+        # nuisance columns must vary within the sites (and subjects)
+        units = np.hstack([(batch[:, None] == np.unique(batch)[None, :]).astype(float),
+                           subject_cols])
+        nuisance_keep = np.flatnonzero(_screen_nuisance(nuisance, units))
+        if nuisance_keep.size < n_Z:
+            warnings.warn(
+                f"Nuisance column(s) {sorted(set(range(n_Z)) - set(nuisance_keep))} do "
+                "not vary within the sites (and subjects) and are not used.",
+                RuntimeWarning, stacklevel=2,
+            )
+        nuisance_setup = [
+            _nuisance_column_setup(nuisance[:, j], nuisance_model, gam_df,
+                                   _column_bounds(smooth_term_bounds, j))
+            for j in nuisance_keep
+        ]
+        if nuisance_keep.size:
+            nuisance, pen_nuisance = _nuisance_design(nuisance[:, nuisance_keep],
+                                                      nuisance_setup)
+        else:
+            nuisance = np.empty((n_subjects, 0))
+        n_Z = nuisance.shape[1]
+        if verbose:
+            kinds = [s['kind'] for s in nuisance_setup]
+            print(f"[ComCAT] Nuisance model '{nuisance_model}': {kinds.count('linear')} "
+                  f"linear, {kinds.count('pspline')} penalized spline column(s) "
+                  f"({n_Z} terms)")
 
     # --------------------------------------------------- batch / design matrix
     levels = np.unique(batch)
@@ -261,8 +358,11 @@ def comcat(
             print(f"[ComCAT] Preserving {n_X} covariate(s)")
     XZ = np.hstack(parts)    # (n_subjects, n_batch + n_Z + n_X)
 
-    # confounding check — warn but continue (pinv handles rank deficiency)
-    if np.linalg.matrix_rank(XZ) < XZ.shape[1]:
+    # confounding check — warn but continue (pinv handles rank deficiency).
+    # Subject terms are collinear with covariates that do not vary within
+    # subjects (e.g. age); only the site and nuisance part is checked then.
+    XZ_check = XZ if subject is None else XZ[:, :n_batch + n_Z]
+    if np.linalg.matrix_rank(XZ_check) < XZ_check.shape[1]:
         # Identify which *original* nuisance columns are most confounded with
         # batch by computing the R² of regressing each original column onto
         # the batch one-hot matrix.
@@ -280,7 +380,6 @@ def comcat(
             details = ", ".join(
                 f"col {i} (R²={r:.3f})" for i, r in confounded
             )
-            import warnings
             warnings.warn(
                 "Design matrix is rank-deficient: nuisance covariate(s) are "
                 f"strongly confounded with batch — {details}. "
@@ -289,7 +388,6 @@ def comcat(
                 RuntimeWarning, stacklevel=3,
             )
         else:
-            import warnings
             warnings.warn(
                 "Design matrix is rank-deficient (covariates confounded with "
                 "batch). Proceeding with pseudoinverse.",
@@ -300,7 +398,28 @@ def comcat(
     if verbose:
         print("[ComCAT] Standardizing data across features")
 
-    beta_hat = pinv(XZ) @ Ym.T   # (n_cols, n_valid)
+    # penalty of the nonlinear nuisance terms ('pspline'): one smoothing
+    # parameter for all nuisance columns, estimated from all features
+    pen = None
+    nuisance_lambda = nuisance_edf = None
+    if pen_nuisance.any():
+        pen_cols = np.zeros(XZ.shape[1], dtype=bool)
+        pen_cols[n_batch:n_batch + n_Z] = pen_nuisance
+        if nuisance_penalty is None or isinstance(nuisance_penalty, str):
+            nuisance_lambda, edf_pen = _select_penalty(
+                Ym, XZ, pen_cols, method=nuisance_penalty or 'reml')
+        else:
+            nuisance_lambda = float(nuisance_penalty)
+            edf_pen = _penalized_edf(XZ, pen_cols, nuisance_lambda)
+        nuisance_edf = edf_pen + int(np.sum(~pen_nuisance))
+        pen = np.where(pen_cols, nuisance_lambda, 0.0)
+        if verbose:
+            print(f"[ComCAT] Nuisance penalty {nuisance_lambda:.3g}: {nuisance_edf:.1f} "
+                  f"effective df of {n_Z} nuisance terms")
+    elif nuisance_model == 'linear':
+        nuisance_edf = float(n_Z)
+
+    beta_hat = _solve(XZ, pen) @ Ym.T   # (n_cols, n_valid)
 
     XZ_no_preserve = XZ[:, list(range(n_batch)) + list(range(n_batch, n_batch + n_Z))]
     fitted_site = XZ_no_preserve @ beta_hat[:n_batch + n_Z, :]   # site + nuisance part of the fit
@@ -336,7 +455,9 @@ def comcat(
         print("[ComCAT] Fitting L/S model")
 
     X_nuisance = np.hstack([batchmod] + ([nuisance] if n_Z > 0 else []))   # (n_subjects, n_batch + n_Z)
-    gamma_hat_masked = pinv(X_nuisance) @ Ym.T   # (n_batch+n_Z, n_valid)
+    # with the same penalty as above, the estimates equal the site and nuisance
+    # rows of beta_hat (in standardized units)
+    gamma_hat_masked = _solve(X_nuisance, None if pen is None else pen[:n_batch + n_Z]) @ Ym.T
 
     # Residuals after removing additive site and nuisance effects; needed when
     # site variances are estimated from residuals or nuisance variance is removed
@@ -470,6 +591,7 @@ def comcat(
         'ind_nan':             ind_nan,
         'batch_levels':        levels_original,
         'n_batch':             n_batch,
+        'n_batches':           n_batches,
         'n_nuisance_orig':     n_nuisance_orig,
         'n_Z':                 n_Z,
         'n_X':                 n_X,
@@ -488,6 +610,13 @@ def comcat(
         'gamma_star_masked':   gamma_star_masked if use_eb else None,
         'delta_star_masked':   delta_star_masked if use_eb else None,
         'eb_priors':           eb_priors,
+        # nuisance model ('linear', 'pspline') and subject terms
+        'nuisance_model':      nuisance_model,
+        'nuisance_keep':       nuisance_keep,
+        'nuisance_setup':      nuisance_setup,
+        'nuisance_lambda':     nuisance_lambda,
+        'nuisance_edf':        nuisance_edf,
+        'n_subject_cols':      subject_cols.shape[1],
     }
     if scale_model is not None:
         # per-feature test of nuisance effects on the variance, full feature space
@@ -631,6 +760,178 @@ def _build_preserve_basis(
     if verbose and cols:
         print(f"[ComCAT] GAM (B-spline, df={df}) for preserve column(s) {cols}")
     return np.hstack(parts), {'df': df, 'cols': cols, 'constructors': constructors}
+
+
+def _subject_design(subject) -> np.ndarray:
+    """Centred subject indicators without the last subject, (n, n_subjects - 1).
+
+    Added to the preserved covariates, they restrict the site and nuisance
+    estimates to the variation within subjects (subject fixed effects).
+    """
+    _, codes = np.unique(subject, return_inverse=True)
+    D = (codes[:, None] == np.arange(codes.max() + 1)[None, :]).astype(float)
+    return (D - D.mean(axis=0))[:, :-1]
+
+
+def _screen_nuisance(nuisance, units, tol=1e-6) -> np.ndarray:
+    """Columns of nuisance (n, q) that vary within the units (n, k) — the site
+    indicators and subject terms: their sum of squares after regression on the
+    units must exceed tol times the total sum of squares."""
+    U, s, _ = np.linalg.svd(units, full_matrices=False)
+    Q = U[:, s > s[0] * max(units.shape) * np.finfo(float).eps]
+    keep = np.zeros(nuisance.shape[1], dtype=bool)
+    for j in range(nuisance.shape[1]):
+        z = nuisance[:, j] - nuisance[:, j].mean()
+        within = np.sum((z - Q @ (Q.T @ z)) ** 2)
+        keep[j] = within > tol * np.sum(z ** 2) and np.ptp(nuisance[:, j]) > 0
+    return keep
+
+
+def _column_bounds(smooth_term_bounds, j):
+    """Boundary knots of nuisance column j from smooth_term_bounds, or None."""
+    if isinstance(smooth_term_bounds, list):
+        return smooth_term_bounds[j]
+    if isinstance(smooth_term_bounds, tuple) and smooth_term_bounds != (None, None):
+        return smooth_term_bounds
+    return None
+
+
+def _bspline_basis(x, knots, degree):
+    """Cubic B-spline basis (n, len(knots) - degree - 1) at x within the knots."""
+    from scipy.interpolate import BSpline
+    return BSpline.design_matrix(np.asarray(x, float), knots, degree).toarray()
+
+
+def _nuisance_column_setup(x, model, df, bounds=None, degree=3) -> dict:
+    """Basis of one nuisance column for 'linear' and 'pspline'.
+
+    'linear': z-scored column.  'pspline' (Eilers & Marx, 1996): the z-scored
+    column (unpenalized) plus the nonlinear part of a cubic B-spline basis with
+    df functions on equally spaced knots over [lo, hi] (training range or
+    bounds).  The nonlinear part is the basis minus its least-squares fit by
+    intercept and slope in the training data, reparametrized so that the
+    second-order difference penalty becomes a ridge penalty on its df - 2
+    coefficients.  Outside [lo, hi] it is evaluated at the boundary, so the
+    fitted effect continues linearly there.  Columns with fewer than df + 2
+    distinct values stay linear.
+    """
+    x = np.asarray(x, float)
+    sd = x.std()
+    setup = {'kind': 'linear', 'mean': float(x.mean()), 'sd': float(sd) if sd > 0 else 1.0}
+    if model == 'linear' or len(np.unique(x)) < df + 2:
+        return setup
+    lo, hi = (float(x.min()), float(x.max())) if bounds is None else map(float, bounds)
+    n_seg = df - degree
+    if n_seg < 1 or not hi > lo:
+        return setup
+    inner = np.linspace(lo, hi, n_seg + 1)          # exact boundary knots
+    dx = inner[1] - inner[0]
+    knots = np.concatenate([lo - dx * np.arange(degree, 0, -1), inner,
+                            hi + dx * np.arange(1, degree + 1)])
+    c = np.clip(x, lo, hi)
+    B = _bspline_basis(c, knots, degree)
+    C = np.linalg.lstsq(np.column_stack([np.ones_like(c), c]), B, rcond=None)[0]
+    D = np.diff(np.eye(df), n=2, axis=0)
+    ev, V = np.linalg.eigh(D.T @ D)
+    pos = ev > ev.max() * 1e-10
+    setup.update(kind='pspline', lo=lo, hi=hi, knots=knots, degree=degree, C=C,
+                 T=V[:, pos] / np.sqrt(ev[pos]))
+    return setup
+
+
+def _nuisance_design(nuisance, setups):
+    """Nuisance basis (n, n_Z) of the columns of nuisance (n, q) with their
+    setups, and the penalized columns (n_Z,) bool."""
+    parts, pen = [], []
+    for j, st in enumerate(setups):
+        x = np.asarray(nuisance[:, j], float)
+        parts.append(((x - st['mean']) / st['sd'])[:, None])
+        pen.append(False)
+        if st['kind'] == 'pspline':
+            c = np.clip(x, st['lo'], st['hi'])
+            N = (_bspline_basis(c, st['knots'], st['degree'])
+                 - np.column_stack([np.ones_like(c), c]) @ st['C'])
+            parts.append(N @ st['T'])
+            pen.extend([True] * st['T'].shape[1])
+    return np.hstack(parts), np.array(pen, dtype=bool)
+
+
+def _solve(X, pen=None):
+    """Least-squares operator (k, n) of X (n, k): pinv(X), or with a ridge
+    penalty pen (k,) on some coefficients the minimizer of
+    ||y - X b||^2 + sum(pen * b^2), via the augmented system."""
+    if pen is None or not np.any(pen):
+        return pinv(X)
+    A = np.vstack([X, np.diag(np.sqrt(pen))])
+    return pinv(A)[:, :X.shape[0]]
+
+
+def _penalty_spectrum(X, pen):
+    """Rank of the unpenalized columns, their orthonormal basis Q, and the
+    singular values and left vectors of the penalized columns after
+    projecting out the unpenalized ones."""
+    U = X[:, ~pen]
+    Uu, su, _ = np.linalg.svd(U, full_matrices=False)
+    r_u = int(np.sum(su > su[0] * max(U.shape) * np.finfo(float).eps)) if su.size else 0
+    Q = Uu[:, :r_u]
+    P = X[:, pen]
+    P = P - Q @ (Q.T @ P)
+    W, s, _ = np.linalg.svd(P, full_matrices=False)
+    ok = s > (s[0] if s.size else 0) * max(P.shape) * np.finfo(float).eps
+    return r_u, Q, W[:, ok], s[ok]
+
+
+def _penalized_edf(X, pen, lam):
+    """Effective df of the penalized columns pen of X for the ridge penalty lam."""
+    _, _, _, s = _penalty_spectrum(X, pen)
+    return float(np.sum(s ** 2 / (s ** 2 + lam)))
+
+
+def _select_penalty(Ym, X, pen, method='reml', n_grid=141, chunk=20000):
+    """Common ridge penalty of the penalized columns pen of X, estimated from
+    all features of Ym (n_valid, n_subjects), each standardized.
+
+    'reml': restricted log-likelihood summed over features, with a variance per
+    feature: y = U a + P b + e, b ~ N(0, sigma^2 / lam), e ~ N(0, sigma^2), U
+    the unpenalized columns.  'gcv': n * sum(RSS) / (n - edf)^2 pooled over
+    features.  The penalty is searched on a log grid of 14 decades around the
+    median squared singular value of the penalized columns.
+
+    Returns (lambda, effective df of the penalized columns).
+    """
+    if method not in ('reml', 'gcv'):
+        raise ValueError(f"nuisance_penalty must be 'reml', 'gcv' or a number, not {method!r}.")
+    n = X.shape[0]
+    r_u, Q, W, s = _penalty_spectrum(X, pen)
+    if s.size == 0:
+        return np.inf, 0.0
+    n_eff = n - r_u
+    s2 = s ** 2
+    # projections of the standardized features, chunked over features
+    rss_perp, C2 = [], []
+    for start in range(0, Ym.shape[0], chunk):
+        y = Ym[start:start + chunk]
+        sd = y.std(axis=1, keepdims=True)
+        y = (y - y.mean(axis=1, keepdims=True)) / np.where(sd > 0, sd, 1.0)
+        qy, cy = y @ Q, y @ W
+        rss_perp.append(np.sum(y ** 2, axis=1) - np.sum(qy ** 2, axis=1) - np.sum(cy ** 2, axis=1))
+        C2.append(cy ** 2)
+    rss_perp = np.maximum(np.concatenate(rss_perp), 0.0)
+    C2 = np.vstack(C2)
+    grid = np.median(s2) * 10.0 ** np.linspace(-6, 8, n_grid)
+    scores = np.empty(n_grid)
+    for i, lam in enumerate(grid):
+        f = lam / (s2 + lam)              # share of a component left in the residual
+        if method == 'gcv':
+            rss = np.sum(rss_perp) + np.sum(C2 @ (f ** 2))
+            edf = r_u + np.sum(s2 / (s2 + lam))
+            scores[i] = n * rss / max(n - edf, 1e-9) ** 2
+        else:
+            sig2 = (rss_perp + C2 @ f) / n_eff
+            scores[i] = (n_eff * np.sum(np.log(np.maximum(sig2, 1e-300)))
+                         + len(sig2) * np.sum(np.log1p(s2 / lam)))
+    lam = float(grid[int(np.argmin(scores))])
+    return lam, float(np.sum(s2 / (s2 + lam)))
 
 
 def _standardize_columns(A: np.ndarray, mean=None, sd=None):
@@ -913,6 +1214,7 @@ def comcat_from_training(
     preserve: np.ndarray | None = None,
     estimates: dict = None,
     verbose: bool = False,
+    unseen_batch: str = 'error',
 ) -> np.ndarray:
     """Apply pre-fitted ComCAT estimates to new data.
 
@@ -926,6 +1228,10 @@ def comcat_from_training(
                 (spline expansion from preserve_df is reapplied with the training knots)
     estimates : dict returned by comcat(..., return_estimates=True)
     verbose   : print progress
+    unseen_batch : 'error' (default) raises for site labels not seen in training;
+                'mean' gives them the size-weighted mean site level and the pooled
+                variance (no site correction, nuisance effects are removed), e.g.
+                for patients of a site without controls when fitted on controls
 
     The optional extensions used in training (preserve_df, nuisance_scale,
     residual_delta) are applied with the training estimates, and so are the
@@ -962,17 +1268,15 @@ def comcat_from_training(
     n_X               = estimates['n_X']
     ref_level         = estimates['ref_level']
 
-    # Map new batch labels to training indices
-    try:
-        batch_idx = np.array(
-            [int(np.where(batch_levels == b)[0][0]) for b in batch]
-        )
-    except IndexError as exc:
-        missing = set(batch) - set(batch_levels)
+    # Map new batch labels to training indices (-1: not seen in training)
+    lookup = {b: i for i, b in enumerate(batch_levels.tolist())}
+    batch_idx = np.array([lookup.get(b, -1) for b in batch.tolist()], dtype=int)
+    if np.any(batch_idx < 0) and unseen_batch != 'mean':
+        missing = set(np.asarray(batch)[batch_idx < 0].tolist())
         raise ValueError(
             f"Batch labels {missing} were not seen during training. "
             f"Known labels: {batch_levels.tolist()}"
-        ) from exc
+        )
 
     nuisance = _to_col_matrix(nuisance, n_subjects)
     preserve = _to_col_matrix(preserve, n_subjects)
@@ -983,16 +1287,24 @@ def comcat_from_training(
     if preserve_splines is not None:
         preserve, _ = _build_preserve_basis(preserve, None,
                                             preserve_splines=preserve_splines)
+    # subject terms of the training: new subjects have none
+    n_subject_cols = estimates.get('n_subject_cols', 0)
+    if n_subject_cols:
+        preserve = np.hstack([preserve, np.zeros((n_subjects, n_subject_cols))])
 
     # Nuisance basis expansion — same configuration as training
     smooth_term_bounds_ft = estimates.get('smooth_term_bounds')
     gam_df_ft             = estimates.get('gam_df')
     spline_constructors   = estimates.get('spline_constructors', {})
-    if n_nuisance_orig > 0:
+    if n_nuisance_orig > 0 and estimates.get('nuisance_model', 'spline') == 'spline':
         nuisance, _ = _build_nuisance_basis(
             nuisance, smooth_term_bounds_ft,
             gam_df_ft, verbose, spline_constructors=spline_constructors
         )
+    elif n_nuisance_orig > 0:
+        keep = estimates['nuisance_keep']
+        nuisance = (_nuisance_design(nuisance[:, keep], estimates['nuisance_setup'])[0]
+                    if len(keep) else np.empty((n_subjects, 0)))
     n_Z = nuisance.shape[1]
 
     # Transpose Y if needed
@@ -1016,8 +1328,14 @@ def comcat_from_training(
     # Standardize using training parameters
     Ym_std = (Ym - grand_mean[:, None] - preserve_contrib) / std_pooled[:, None]
 
-    # Build nuisance design for new subjects (batch one-hot + nuisance)
+    # Build nuisance design for new subjects (batch one-hot + nuisance); unseen
+    # sites get the size-weighted mean of the site levels
     batchmod_new = (batch_idx[:, None] == np.arange(n_batch)[None, :]).astype(float)
+    unseen = batch_idx < 0
+    if np.any(unseen):
+        nb = estimates.get('n_batches')
+        w = np.ones(n_batch) if nb is None else np.asarray(nb, float)
+        batchmod_new[unseen] = w / w.sum()
     X_nuisance_new = np.hstack([batchmod_new] + ([nuisance] if n_Z > 0 else []))
 
     # Apply saved batch effects
@@ -1045,6 +1363,13 @@ def comcat_from_training(
             numer /= scale_factor[:, idx]
         Ym_adj[:, idx] = numer / denom
 
+    if np.any(unseen):                      # location only, pooled variance
+        idx = np.flatnonzero(unseen)
+        numer = Ym_std[:, idx] - (X_nuisance_new[idx, :] @ gamma_masked).T
+        if scale_factor is not None:
+            numer /= scale_factor[:, idx]
+        Ym_adj[:, idx] = numer
+
     Ym_adj = np.where(np.isfinite(Ym_adj), Ym_adj, 0.0)
 
     # Reconstruct
@@ -1064,3 +1389,141 @@ def comcat_from_training(
         Y_harmonized = Y_harmonized.T
 
     return Y_harmonized
+
+
+# ---------------------------------------------------------------------------
+# Cross-fitted harmonization
+# ---------------------------------------------------------------------------
+
+def comcat_crossfit(
+    Y: np.ndarray,
+    batch: np.ndarray | None,
+    nuisance: np.ndarray | None = None,
+    preserve: np.ndarray | None = None,
+    folds=5,
+    fit=None,
+    subject=None,
+    seed: int = 0,
+    return_folds: bool = False,
+    **kwargs,
+):
+    """ComCAT with every subject harmonized by a model that was not fitted on it.
+
+    The samples on which models are estimated (fit, default all) are split into
+    folds; the samples of every fold are harmonized with comcat_from_training()
+    using a model fitted on the other folds.  All other samples (e.g. patients
+    when fit marks the controls) are harmonized with the model fitted on all fit
+    samples, so a disease effect cannot enter the estimated nuisance effects.
+    Samples of a site that has no fit sample in the other folds are also
+    harmonized with that model (with a warning).
+
+    Parameters
+    ----------
+    Y, batch, nuisance, preserve : as for comcat(); batch None = one site
+    folds    : int k (k folds over subjects, or over samples without subject
+               labels, stratified by site), or an array (n_subjects,) of fold labels
+    fit      : bool array (n_subjects,) of the samples used for estimation
+    subject  : subject labels; all scans of a subject fall into one fold, and
+               they are passed on to comcat() (effects within subjects)
+    seed     : random seed of the folds
+    kwargs   : further options of comcat()
+
+    Returns Y_harmonized (orientation as Y), and with return_folds the folds.
+    """
+    Y = np.array(Y, dtype=np.float64)
+    n = None
+    for arr in (batch, subject):
+        if arr is not None and np.asarray(arr).size:
+            n = np.asarray(arr).size
+            break
+    else:
+        for arr in (nuisance, preserve):
+            if arr is not None and np.asarray(arr).size:
+                n = int(max(np.asarray(arr).shape))
+                break
+    if n is None:
+        raise ValueError("comcat_crossfit needs batch, nuisance, preserve or subject.")
+    transp = Y.shape[1] != n
+    if transp:
+        Y = Y.T
+    bvec = np.ones(n, dtype=int) if batch is None else np.asarray(batch).ravel()
+    Z = None if nuisance is None else _to_col_matrix(nuisance, n)
+    P = None if preserve is None else _to_col_matrix(preserve, n)
+    S = None if subject is None else np.asarray(subject).ravel()
+    fit = np.ones(n, dtype=bool) if fit is None else np.asarray(fit, dtype=bool).ravel()
+    if np.isscalar(folds):
+        folds = _make_folds(bvec, S, fit, int(folds), seed)
+    folds = np.asarray(folds).ravel()
+
+    # unpenalized B-splines: knots over all samples, so held-out values lie inside
+    if (Z is not None and kwargs.get('nuisance_model', 'pspline') == 'spline'
+            and kwargs.get('smooth_term_bounds') is None):
+        kwargs['smooth_term_bounds'] = [(float(Z[:, j].min()), float(Z[:, j].max()))
+                                        for j in range(Z.shape[1])]
+    # preserve splines likewise (comcat_from_training cannot extrapolate them)
+    if (P is not None and kwargs.get('preserve_df') is not None
+            and kwargs.get('preserve_bounds') is None):
+        kwargs['preserve_bounds'] = [(float(P[:, j].min()), float(P[:, j].max()))
+                                     for j in range(P.shape[1])]
+    kwargs['return_estimates'] = True
+
+    def rows(a, m):
+        return None if a is None else a[m]
+
+    def fit_on(m):
+        return comcat(Y[:, m], None if batch is None else bvec[m], rows(Z, m), rows(P, m),
+                      subject=rows(S, m), **kwargs)[4]
+
+    def apply(est, m):
+        return comcat_from_training(Y[:, m], bvec[m], rows(Z, m), rows(P, m), estimates=est,
+                                    unseen_batch='mean')
+
+    H = np.full(Y.shape, np.nan)
+    rest = ~fit
+    for k in np.unique(folds[fit]):
+        te = fit & (folds == k)
+        est = fit_on(fit & (folds != k))
+        known = np.isin(bvec, est['batch_levels'])
+        if np.any(te & known):
+            H[:, te & known] = apply(est, te & known)
+        rest |= te & ~known
+    if np.any(rest):
+        n_unseen = int(np.sum(rest & fit))
+        if n_unseen:
+            warnings.warn(f"{n_unseen} sample(s) of sites without fit samples in the other "
+                          "folds were harmonized with the model of all fit samples.",
+                          RuntimeWarning, stacklevel=2)
+        H[:, rest] = apply(fit_on(fit), rest)
+    H = H.T if transp else H
+    return (H, folds) if return_folds else H
+
+
+def _make_folds(batch, subject, fit, k, seed=0):
+    """Fold labels (n,) over subjects (or samples), stratified by site.
+
+    Units are subjects (all their scans in one fold) or single samples.  Within
+    every site, its fit units are shuffled and dealt to the folds in turn, the
+    start rotating between sites so that small sites do not all fall into the
+    first folds.  A subject scanned at several sites is counted at its most
+    frequent one.  Samples outside fit get the label -1.
+    """
+    rng = np.random.default_rng(seed)
+    n = len(batch)
+    units = np.arange(n) if subject is None else subject
+    levels, code = np.unique(units, return_inverse=True)
+    unit_fit = np.zeros(len(levels), dtype=bool)
+    np.logical_or.at(unit_fit, code, fit)
+    unit_site = np.empty(len(levels), dtype=object)
+    for u in range(len(levels)):
+        b, c = np.unique(batch[code == u], return_counts=True)
+        unit_site[u] = b[np.argmax(c)]
+    fold_u = np.full(len(levels), -1)
+    start = 0
+    for s in np.unique(unit_site[unit_fit].astype(str)):
+        members = np.flatnonzero(unit_fit & (unit_site.astype(str) == s))
+        rng.shuffle(members)
+        fold_u[members] = (start + np.arange(len(members))) % k
+        start = (start + len(members)) % k
+    folds = fold_u[code]
+    folds[~fit] = -1
+    return folds

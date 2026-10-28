@@ -18,8 +18,8 @@ for name in ('ON-Harmony', 'Buchert', 'ABIDE', 'NormSample', 'ADNI'):
     for cfg, nuis, opts in (("sites only", None, {}), ("sites+IQM", iqm, {}),
                             ("sites+IQM resdelta", iqm, dict(residual_delta=True))):
         t0 = time.time()
-        y1 = comcat(Y, site, nuis, age, eb=True, **opts)[0]
-        y0 = comcat(Y, site, nuis, age, eb=False, **opts)[0]
+        y1 = comcat(Y, site, nuis, age, eb=True, nuisance_model='spline', **opts)[0]
+        y0 = comcat(Y, site, nuis, age, eb=False, nuisance_model='spline', **opts)[0]
         rms = np.array([np.sqrt(np.mean(((y1 - y0)[:, codes == k] / sd) ** 2)) for k in range(len(labels))])
         cells = []
         for a, b in bins:

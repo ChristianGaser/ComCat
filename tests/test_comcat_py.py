@@ -33,7 +33,11 @@ from scipy.io import loadmat
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
 sys.path.insert(0, _ROOT)
-from comcat import comcat, comcat_from_training
+from functools import partial  # noqa: E402
+from comcat import comcat, comcat_from_training  # noqa: E402
+
+# the MATLAB reference results were computed with the unpenalized B-splines
+comcat = partial(comcat, nuisance_model='spline')
 
 # .mat reference files (MATLAB-generated) are looked for next to this script
 DATA_DIR = _HERE

@@ -31,7 +31,7 @@ def fit_apply(Y, codes, iqm, age, tr, te, use_iqm, opts, eb, variant):
     CTX.update(variant=variant, codes=cod_tr,
                Zt=_build_nuisance_basis(iqm[tr], bounds, gam_df)[0] if use_iqm else None)
     nz = (lambda m: iqm[m]) if use_iqm else (lambda m: None)
-    est = comcat(Y[:, tr], codes[tr], nz(tr), age[tr], gam_df=gam_df, eb=eb,
+    est = comcat(Y[:, tr], codes[tr], nz(tr), age[tr], gam_df=gam_df, eb=eb, nuisance_model='spline',
                  smooth_term_bounds=bounds, return_estimates=True, **opts)[4]
     return comcat_from_training(Y[:, te], codes[te], nz(te), age[te], estimates=est)
 

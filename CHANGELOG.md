@@ -2,6 +2,49 @@
 
 ## Unreleased (2026-10-28)
 
+### Added — nuisance models, subject terms, cross-fitting (opt-in)
+
+- `comcat(..., nuisance_model='spline'|'linear'|'pspline')`. `'spline'` (default) is the
+  unpenalized B-spline basis of earlier versions. `'linear'` enters every nuisance
+  column linearly. `'pspline'` uses penalized cubic B-splines (Eilers & Marx): one
+  unpenalized linear term and `gam_df - 2` nonlinear terms per column, shrunk by a
+  second-order difference penalty with one smoothing parameter for all columns,
+  estimated from all features by pooled REML (default) or GCV (`nuisance_penalty`), or
+  fixed. This is an empirical Bayes estimate of the size of the nonlinear nuisance
+  effects across features; large penalties give the linear model. New data are
+  evaluated with the nonlinear part at the training range (the linear part continues).
+  With both new models, nuisance columns that do not vary within the sites (and
+  subjects) are dropped with a warning, and columns with fewer than `gam_df + 2`
+  distinct values stay linear. Estimates add `nuisance_model`, `nuisance_keep`,
+  `nuisance_setup`, `nuisance_lambda` and `nuisance_edf`.
+- `comcat(..., subject=labels)`: centred subject indicators are added to the preserved
+  covariates, so the site and nuisance effects are estimated from the variation within
+  subjects (traveling-subject, test–retest and motion designs). Implies `mean_only`.
+  `comcat_from_training()` treats its subjects as new subjects.
+- `comcat_crossfit()`: every subject is harmonized with a model fitted without it
+  (k-fold over subjects, stratified by site, or given folds), optionally fitted on a
+  subset such as the controls and applied to all others.
+- `comcat_from_training(..., unseen_batch='mean')`: sites not seen in training get the
+  size-weighted mean site level and the pooled variance (no site correction; the
+  nuisance effects are removed), e.g. patients of a site without controls.
+- `comcat_ui`/CLI: `nuisance_model` (`--nuisance-model`), `nuisance_penalty`; folder
+  suffix `_nuisance<q>_linear` or `_nuisance<q>_pspline` instead of `_gam<df>`.
+- Tests: `tests/test_comcat_nuisance_models.py`.
+
+### Changed — default nuisance model: penalized B-splines
+
+- `nuisance_model='pspline'` is now the default of `comcat()`, `comcat_crossfit()`,
+  `comcat_ui()` and the CLI (`gam_df` defaults to 10 basis functions; REML sets the
+  smoothness). With the unpenalized B-splines of earlier versions, several IQMs gave
+  rank-deficient designs that overfit and did not generalize to new scans
+  (`HeldOut-Evaluation.md`; held-out evaluation of the paper revision in
+  `Harmonization-Oxford/revision/`). `nuisance_model='spline'` reproduces earlier
+  results; `comcat_ui` folders of the new default end in `_nuisance<q>_pspline`.
+- Pinned to `'spline'` so that their documented numbers reproduce: `decentralized_comcat.py`
+  (whose decentralized fit implements that basis), `simulate_comcat.py`, the scripts in
+  `evaluation/` and the MATLAB comparison `tests/test_comcat_py.py`. The option and EB
+  tests run with the new default.
+
 ### Added — empirical Bayes estimation of site effects (on by default)
 
 - `comcat()`: new argument `eb=True`. With at least two sites, the additive (γ) and

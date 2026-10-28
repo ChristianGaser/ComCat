@@ -121,7 +121,7 @@ def harmonize(Y, codes, iqm, age, tr, te, variant, subj=None):
         Ztr, Zte = Z[tr], Z[te]
     else:
         Ztr = Zte = bounds = None
-    Htr, *_, est = comcat(Y[:, tr], batch_tr, Ztr, P_tr, gam_df=gam_df,
+    Htr, *_, est = comcat(Y[:, tr], batch_tr, Ztr, P_tr, gam_df=gam_df, nuisance_model='spline',
                           smooth_term_bounds=bounds, return_estimates=True, **opts)
     bte = codes[te] if multi else np.ones(int(te.sum()), int)
     Hte = comcat_from_training(Y[:, te], bte, Zte, P_te, estimates=est)

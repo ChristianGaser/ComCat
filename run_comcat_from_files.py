@@ -179,6 +179,8 @@ NUISANCE_SCALE = False # also remove nuisance-dependent variance (heteroscedasti
                        # (scale_lr/scale_p/scale_kurtosis)
 RESIDUAL_DELTA = False # estimate site variances after removing nuisance effects
                        # (as ComBat); implied by NUISANCE_SCALE
+NUISANCE_MODEL = 'pspline' # 'pspline' (penalized B-splines, smoothing by REML),
+                       # 'linear', or 'spline' (unpenalized B-splines, earlier versions)
 
 # ---------------------------------------------------------------------------
 # Load covariates from text files
@@ -228,6 +230,7 @@ for mat_file in MAT_FILES:
         preserve_df    = PRESERVE_DF,
         nuisance_scale = NUISANCE_SCALE,
         residual_delta = RESIDUAL_DELTA,
+        nuisance_model = NUISANCE_MODEL,
         eb             = EB,
     )
 

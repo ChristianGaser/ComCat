@@ -50,7 +50,7 @@ ComCAT is a Python toolkit for **harmonizing multi-site neuroimaging data**. It 
 ComCAT implements a harmonization model that:
 
 1. **Removes additive and multiplicative batch effects** (scanner / site differences).
-2. **Regresses out nuisance covariates** (e.g., image quality metrics, total intracranial volume) using B-spline GAM smoothing.
+2. **Regresses out nuisance covariates** (e.g., image quality metrics, total intracranial volume) using penalized B-splines (smoothness by REML).
 3. **Preserves biological covariates of interest** (e.g., age, group) so they are not inadvertently removed.
 
 When only batch correction is requested, ComCAT is ComBat with empirical Bayes: it agrees with `combat_family.combat_eb()`, the port of the R package ComBatFamily, to ~1e-13. With nuisance covariates it extends ComBat with flexible nuisance modelling, and the empirical Bayes step is applied to the site effects.
@@ -172,12 +172,18 @@ Y_test_harm = comcat_from_training(
 
 ### Nuisance modelling: B-spline GAM
 
-Every nuisance column is always modelled with a B-spline GAM (a flexible
-non-linear fit; `statsmodels` is required). There is no linear or polynomial
-option. The GAM is configured with `gam_df` (basis dimension) and, for
-train/test workflows, `smooth_term_bounds` (explicit knot bounds).
+Every nuisance column is modelled as a smooth function. By default
+(`nuisance_model='pspline'`) it is a penalized cubic B-spline with `gam_df = 10` basis
+functions: a linear term plus nonlinear terms shrunk by a second-order difference
+penalty, with one smoothing parameter for all columns estimated by REML across all
+features. Large penalties give the linear model, so the data choose between linear and
+nonlinear effects. `nuisance_model='linear'` uses linear terms only.
+`nuisance_model='spline'` is the unpenalized B-spline of earlier versions; for it,
+`gam_df` is the smoothness, and the guidance below applies. `smooth_term_bounds` sets
+the knot bounds (by default the training range; new data are evaluated with the
+nonlinear part at the boundary).
 
-**Recommended `gam_df` values by covariate type**
+**Recommended `gam_df` values by covariate type (unpenalized `'spline'` only)**
 
 | Covariate | Recommended `gam_df` |
 |---|---|
@@ -186,7 +192,7 @@ train/test workflows, `smooth_term_bounds` (explicit knot bounds).
 | Continuous score | 5 – 6 |
 | General rule | `max(5, n // 30)`, capped at 10 |
 
-When `gam_df=None` (default), the value is auto-selected as `min(10, max(5, n // 30))`.
+When `gam_df=None` (default), it is 10 for `'pspline'` and `min(10, max(5, n // 30))` for `'spline'`.
 
 ### Empirical Bayes (default)
 
@@ -308,6 +314,37 @@ These options are not available in `decentralized_comcat.py`. Empirical Bayes is
 runs on the aggregator and needs no additional data from the sites.
 
 ---
+
+### Nuisance models, subject terms and cross-fitting
+
+The default nuisance model is penalized B-splines (`nuisance_model='pspline'`) with one
+smoothing parameter estimated by REML across all features. The unpenalized B-splines of
+earlier versions (`'spline'`) overfit when several IQMs are used and do not generalize to
+new scans ([HeldOut-Evaluation.md](HeldOut-Evaluation.md)). For BrainAGE, the revision of
+the ComCat paper uses (site variances off, i.e. location correction only):
+
+```python
+from comcat import comcat_crossfit
+
+H = comcat_crossfit(
+    Y, site, iqm[:, [ICR, NCR, res_ECR, contrastr]], preserve,   # no IQR/SIQR
+    folds=5,                     # every subject harmonized by a model fitted without it
+    fit=controls,                # optional: estimate on controls, apply to everybody
+    subject=subject_ids,         # repeated scans: effects estimated within subjects
+    nuisance_model='pspline',    # penalized splines, smoothing by REML (or 'linear')
+    mean_only=True,              # location correction of the IQM effects
+)
+```
+
+- **IQMs.** IQR is a deterministic function of NCR and res_RMS (CAT12:
+  `rms([NCR res_RMS], 8)`), and SIQR correlates 0.96–1.00 with res_ECR. res_RMS is a
+  property of the protocol: use it only where the resolution varies within the sites.
+- **Shape.** With `'pspline'`, REML chooses between linear and nonlinear effects; in
+  most samples it chose nearly linear ones.
+- **Preserved covariates** matter only for the estimation in location-only mode: the
+  harmonized data are `Y - nuisance effect`, so the preserved fit cannot leak into
+  BrainAGE. With a variance step, every scan is pulled toward the preserved fit at its
+  own age.
 
 ## File I/O Interface — `comcat_ui.py`
 
@@ -610,8 +647,15 @@ comcat(
     nuisance_scale = False,     # also remove nuisance-dependent variance
     residual_delta = False,     # site variances from residuals (as ComBat)
     eb             = True,      # empirical Bayes estimation of site effects (as ComBat)
+    nuisance_model = 'pspline', # 'pspline' (REML, default), 'linear', 'spline' (earlier)
+    nuisance_penalty = None,    # 'pspline': None/'reml', 'gcv' or a fixed penalty
+    subject        = None,      # subject labels: effects estimated within subjects
 )
 ```
+
+`comcat_crossfit(Y, batch, nuisance, preserve, folds=5, fit=None, subject=None, **options)`
+harmonizes every subject with a model fitted without it (`fit`: e.g. the controls; all
+other subjects are harmonized with the model of all `fit` subjects).
 
 ### `comcat_ui()` full signature
 

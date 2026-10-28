@@ -140,6 +140,7 @@ def _build_subfolder(
     nuisance_scale: bool = False,
     residual_delta: bool = False,
     eb: bool = False,
+    nuisance_model: str = 'pspline',
 ) -> str:
     """Folder name encoding the settings.  Without empirical Bayes and the
     optional extensions, the names are those of earlier versions; empirical
@@ -159,7 +160,8 @@ def _build_subfolder(
     if mean_only:
         sf += '_meanonly'
     if n_nuisance > 0:
-        sf += f'_nuisance{n_nuisance}_gam{gam_df}'
+        sf += (f'_nuisance{n_nuisance}_gam{gam_df}' if nuisance_model == 'spline'
+               else f'_nuisance{n_nuisance}_{nuisance_model}')
         if nuisance_scale:
             sf += '_scale'                 # implies residual site variances
         elif residual_delta and not mean_only:
@@ -192,11 +194,13 @@ def comcat_ui(
     nuisance_scale: bool = False,
     residual_delta: bool = False,
     eb: bool = True,
+    nuisance_model: str = 'pspline',
+    nuisance_penalty=None,
 ):
     """
     Run ComCAT on a list of image/data files and save harmonized results.
 
-    Every nuisance column is modelled with a B-spline GAM (requires statsmodels).
+    Every nuisance column is modelled as a penalized B-spline by default.
 
     Parameters
     ----------
@@ -229,6 +233,10 @@ def comcat_ui(
                     (scale_kurtosis).
     residual_delta: estimate site variances after removing nuisance effects (as in
                     ComBat).  Folder suffix '_resdelta'.
+    nuisance_model: 'pspline' (default, penalized B-splines, see comcat.py), 'linear'
+                    or 'spline' (unpenalized B-splines of earlier versions).  Folder
+                    suffix '_pspline' or '_linear'; '_gam<df>' for 'spline'.
+    nuisance_penalty: smoothing parameter of 'pspline' (None/'reml', 'gcv' or a number).
     """
     if not files:
         raise ValueError("No input files provided.")
@@ -325,12 +333,14 @@ def comcat_ui(
         nuisance_scale=nuisance_scale,
         residual_delta=residual_delta,
         eb=eb,
+        nuisance_model=nuisance_model,
+        nuisance_penalty=nuisance_penalty,
         return_estimates=True,
     )
     nuisance_scale = estimates['nuisance_scale'] is not None   # False without nuisance
     eb = estimates['eb']                                       # False with a single site
     options = dict(preserve_df=preserve_df, nuisance_scale=nuisance_scale,
-                   residual_delta=residual_delta, eb=eb)
+                   residual_delta=residual_delta, eb=eb, nuisance_model=nuisance_model)
 
     # guard against extreme variance changes (factor > 10)
     sd0 = np.std(Y, axis=1, ddof=1) if Y.ndim == 2 else np.std(Y, axis=0, ddof=1)
@@ -501,7 +511,7 @@ def _save_scale_test(estimates, out_dir, filetype, ref_img, verbose):
 
 def _save_log_mat(pth, subfolder, batch, nuisance, preserve, gam_df=6,
                   preserve_df=None, nuisance_scale=False, residual_delta=False,
-                  eb=False):
+                  eb=False, nuisance_model='pspline'):
     """Save a .mat log file with ComCAT parameters (mirrors MATLAB behaviour)."""
     try:
         from scipy.io import savemat
@@ -514,6 +524,7 @@ def _save_log_mat(pth, subfolder, batch, nuisance, preserve, gam_df=6,
             'nuisance_scale': int(nuisance_scale),
             'residual_delta': int(residual_delta or nuisance_scale),
             'eb':             int(eb),
+            'nuisance_model': nuisance_model,
         }
         savemat(os.path.join(pth, subfolder + '.mat'), {'Comcat': log})
     except ImportError:
@@ -553,6 +564,11 @@ def _build_parser() -> argparse.ArgumentParser:
                    help='Also remove nuisance-dependent variance.')
     p.add_argument('--residual-delta', action='store_true',
                    help='Estimate site variances after removing nuisance effects.')
+    p.add_argument('--nuisance-model', choices=['pspline', 'linear', 'spline'],
+                   default='pspline',
+                   help="Nuisance model: penalized B-splines with the smoothing parameter "
+                        "estimated by REML (default), linear terms, or the unpenalized "
+                        "B-splines of earlier versions.")
     p.add_argument('--no-eb', action='store_true',
                    help='Disable empirical Bayes estimation of the site effects '
                         '(L/S estimates as in earlier versions).')
@@ -587,6 +603,7 @@ def main(argv=None):
         nuisance_scale=args.nuisance_scale,
         residual_delta=args.residual_delta,
         eb=not args.no_eb,
+        nuisance_model=args.nuisance_model,
     )
 
 

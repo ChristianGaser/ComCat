@@ -221,6 +221,7 @@ def simulate_comcat(
         mean_only=mean_only, verbose=False,
         smooth_term_bounds=bounds,
         gam_df=gam_df,
+        nuisance_model='spline',        # the simulations were run with this model
     )
 
     # ---- residualised adjustment -------------------------------------------
