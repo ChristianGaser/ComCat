@@ -23,16 +23,32 @@ Returns
 -------
 Y_harmonized : ndarray, shape (n_features, n_subjects)
 beta_hat     : ndarray  — full design matrix betas
-gamma_hat    : ndarray  — additive batch/nuisance effects (full feature space)
-delta_hat    : ndarray  — multiplicative batch effects (full feature space)
+gamma_hat    : ndarray  — additive batch/nuisance effects removed from the data
+                          (full feature space; empirical Bayes estimates in the
+                          site rows when eb=True)
+delta_hat    : ndarray  — multiplicative batch effects removed from the data
+                          (full feature space; empirical Bayes estimates when eb=True)
 
 Additional parameters
 ---------------------
+eb                   : bool (default True)
+                       Empirical Bayes estimation of the site effects, as in ComBat
+                       (Johnson et al., 2007): the additive (gamma) and multiplicative
+                       (delta) site parameters of every feature are shrunk towards
+                       priors estimated from all features, which stabilizes them for
+                       small sites.  Used only with at least two sites.  eb=False
+                       gives the L/S estimates of earlier versions.  Without
+                       nuisance covariates the result equals ComBat with empirical
+                       Bayes (combat_family.combat_eb).
 ref_batch            : label of a site to use as reference (its data is left untouched;
                        all other sites are harmonized to its mean level, including its
                        mean nuisance level, and to its variance delta). Default None.
 return_estimates     : if True, a 5th element (dict) with all fitted parameters is
                        returned; pass it to comcat_from_training() for new data.
+                       With eb=True it holds the L/S estimates ('gamma_hat_masked',
+                       'delta_hat_masked'), the applied empirical Bayes estimates
+                       ('gamma_star_masked', 'delta_star_masked') and the priors
+                       ('eb_priors').
 Every nuisance column is always modelled with a B-spline GAM (requires
 statsmodels). The GAM is configured by:
 
@@ -45,7 +61,8 @@ smooth_term_bounds   : boundary knots for the B-spline of each nuisance column.
 gam_df               : int, B-spline basis dimension per nuisance column (default None).
                        Higher values capture finer nonlinearities but risk overfitting.
 
-Optional model extensions (all off by default; defaults reproduce earlier results)
+Optional model extensions (all off by default; with eb=False, the defaults
+reproduce earlier results)
 -------------------------------------------------------------------------------
 preserve_df          : None (default) | int | 'same'
                        B-spline expansion of continuous preserve covariates, so that
@@ -119,6 +136,7 @@ def comcat(
     preserve_bounds=None,
     nuisance_scale: bool = False,
     residual_delta: bool = False,
+    eb: bool = True,
 ):
     """ComCAT harmonization for sites and nuisance parameters.
 
@@ -359,6 +377,23 @@ def comcat(
         else:
             delta_hat_masked[i, :] = np.var(Ym, axis=1, ddof=1)
 
+    # --------------------------------------------------- empirical Bayes
+    use_eb = eb and n_batch > 1 and Ym.shape[0] > 1
+    if use_eb:
+        if verbose:
+            print("[ComCAT] Empirical Bayes estimation of site effects")
+        # mean_only still needs the site variances for the posterior of gamma
+        site_var = (np.vstack([np.var(var_source[:, idx], axis=1, ddof=1) for idx in batches])
+                    if mean_only else delta_hat_masked[:n_batch])
+        gamma_star_masked, delta_star_sites, eb_priors = _eb_site_effects(
+            gamma_hat_masked, site_var, n_batches, ref_level
+        )
+        delta_star_masked = delta_hat_masked.copy()
+        if not mean_only:
+            delta_star_masked[:n_batch] = delta_star_sites
+    else:
+        gamma_star_masked, delta_star_masked, eb_priors = gamma_hat_masked, delta_hat_masked, None
+
     # --------------------------------------------------- adjust data
     if verbose:
         print("[ComCAT] Adjusting the data")
@@ -368,18 +403,25 @@ def comcat(
 
     # with a reference batch, the other batches are scaled to its variance
     # instead of the pooled one, so that they match the untouched reference data
-    delta_ref = delta_hat_masked[ref_level, :] if ref_level is not None else None
+    # (the reference batch is not shrunk by empirical Bayes)
+    delta_ref = delta_star_masked[ref_level, :] if ref_level is not None else None
 
     for i in range(n_batch):
         if ref_level is not None and i == ref_level:
             continue  # reference batch is not adjusted
         idx = batches[i]
-        delta_i = delta_hat_masked[i, :] if delta_ref is None else delta_hat_masked[i, :] / delta_ref
+        delta_i = delta_star_masked[i, :] if delta_ref is None else delta_star_masked[i, :] / delta_ref
         denom = np.sqrt(delta_i)[:, None] * np.ones((1, n_batches[i]))
         if resid_std is not None:
             numer = resid_std[:, idx]
+            if use_eb:
+                # resid_std removed the L/S site effect; remove the EB one instead
+                shift = (gamma_hat_masked[i] - gamma_star_masked[i])[:, None]
+                if scale_model is not None:
+                    shift = shift / _nuisance_scale_factor(nuisance_orig[idx], scale_model)
+                numer = numer + shift
         else:
-            numer = Ym[:, idx] - (X_nuisance[idx, :] @ gamma_hat_masked).T
+            numer = Ym[:, idx] - (X_nuisance[idx, :] @ gamma_star_masked).T
         Ym[:, idx] = numer / denom
     del resid_std
 
@@ -398,15 +440,16 @@ def comcat(
         Y_harmonized[:, ref_idx] = Y[:, ref_idx]
 
     # --------------------------------------------------- full-space outputs
-    n_gamma = gamma_hat_masked.shape[0]
+    # effects that were removed (empirical Bayes estimates with eb)
+    n_gamma = gamma_star_masked.shape[0]
     gamma_hat = np.zeros((n_gamma, n_features), dtype=np.float64)
     for i in range(n_gamma):
-        gamma_hat[i, ind_mask] = gamma_hat_masked[i, :]
+        gamma_hat[i, ind_mask] = gamma_star_masked[i, :]
 
-    n_delta = delta_hat_masked.shape[0]
+    n_delta = delta_star_masked.shape[0]
     delta_hat = np.zeros((n_delta, n_features), dtype=np.float64)
     for i in range(n_delta):
-        delta_hat[i, ind_mask] = delta_hat_masked[i, :]
+        delta_hat[i, ind_mask] = delta_star_masked[i, :]
 
     beta_hat_full = np.zeros((XZ.shape[1], n_features), dtype=np.float64)
     beta_hat_full[:, ind_mask] = beta_hat
@@ -440,6 +483,11 @@ def comcat(
         'preserve_splines':    preserve_splines,
         'residual_delta':      bool(residual_delta or nuisance_scale),
         'nuisance_scale':      scale_model,
+        # empirical Bayes: applied site effects (None without eb) and priors
+        'eb':                  use_eb,
+        'gamma_star_masked':   gamma_star_masked if use_eb else None,
+        'delta_star_masked':   delta_star_masked if use_eb else None,
+        'eb_priors':           eb_priors,
     }
     if scale_model is not None:
         # per-feature test of nuisance effects on the variance, full feature space
@@ -747,6 +795,113 @@ def _nuisance_scale_factor(nuisance_raw, scale_model):
     return np.exp(np.clip(Zs @ scale_model['theta_z'], -300, 300)).T
 
 
+# ComBat's stopping rule (sva::it.sol conv = 1e-4; ComBatFamily: 10e-5 == 1e-4);
+# the iteration limit only guards against non-termination
+_EB_CONV = 1e-4
+_EB_MAX_ITER = 1000
+
+
+def _eb_site_effects(gamma_masked, site_var, n_batches, ref_level=None):
+    """Empirical Bayes estimates of the site effects (eb option).
+
+    The site rows of gamma_masked are the site coefficients at the zero of
+    the nuisance basis minus the grand mean, so they share a per-feature
+    offset that belongs to the nuisance and grand-mean model.  They are
+    therefore shrunk as differences to the size-weighted mean of the sites
+    (or to the reference site), which are the site effects of ComBat, and
+    the offset is added back unchanged.  The reference site and sites with
+    fewer than two subjects keep their L/S estimates.
+
+    Parameters
+    ----------
+    gamma_masked : (n_batch + n_Z, n_valid) L/S estimates [site | nuisance]
+    site_var     : (n_batch, n_valid) site variances delta_hat
+    n_batches    : (n_batch,) subjects per site
+    ref_level    : index of the reference site, or None
+
+    Returns gamma_star (gamma_masked with the site rows replaced),
+    delta_star (n_batch, n_valid) and the priors (see _eb_estimates).
+    """
+    n_batch = len(n_batches)
+    gamma_site = gamma_masked[:n_batch]
+    if ref_level is None:
+        center = (n_batches / n_batches.sum()) @ gamma_site
+    else:
+        center = gamma_site[ref_level]
+    skip = [i for i in range(n_batch) if i == ref_level or n_batches[i] < 2]
+    g_star, delta_star, priors = _eb_estimates(gamma_site - center, site_var,
+                                               n_batches, skip)
+    gamma_star = gamma_masked.copy()
+    gamma_star[:n_batch] = g_star + center
+    return gamma_star, delta_star, priors
+
+
+def _eb_estimates(gamma_hat, delta_hat, n_batches, skip=()):
+    """Parametric empirical Bayes of Johnson et al. (2007), per site.
+
+    Priors gamma_ig ~ N(gamma_bar_i, t2_i) and delta_ig ~ InvGamma(a_i, b_i)
+    are estimated by the method of moments from all features, and the
+    posterior means are found with the iteration and stopping rule of
+    sva::it.sol and ComBatFamily::comfam (as in combat_family._eb_estimates).
+    Only sufficient statistics are needed: the sum of squares of the
+    standardized data of site i around gamma is
+    (n_i - 1) delta_hat + n_i (gamma_hat - gamma)^2.
+
+    gamma_hat, delta_hat : (n_batch, n_valid);  n_batches : (n_batch,)
+    skip : sites that keep gamma_hat and delta_hat
+
+    Returns gamma_star, delta_star and a dict of per-site hyperparameters
+    'gamma_bar', 't2', 'a', 'b' (NaN for skipped sites).
+    """
+    gamma_star, delta_star = gamma_hat.copy(), delta_hat.copy()
+    priors = {k: np.full(len(n_batches), np.nan) for k in ('gamma_bar', 't2', 'a', 'b')}
+
+    for i, n_b in enumerate(n_batches):
+        if i in skip:
+            continue
+        g_hat, d_hat = gamma_hat[i], delta_hat[i]
+
+        # method of moments estimates of the priors
+        g_bar, t2 = np.mean(g_hat), np.var(g_hat, ddof=1)
+        d_bar, d_var = np.mean(d_hat), np.var(d_hat, ddof=1)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            a = (2 * d_var + d_bar ** 2) / d_var
+            b = (d_bar * d_var + d_bar ** 3) / d_var
+        ss = (n_b - 1) * d_hat
+
+        g_old, d_old = g_hat, d_hat
+        change_old = 1.0
+        with np.errstate(divide='ignore', invalid='ignore'):
+            for count in range(_EB_MAX_ITER):
+                g_new = (n_b * t2 * g_hat + d_old * g_bar) / (n_b * t2 + d_old)
+                d_new = ((ss + n_b * (g_hat - g_new) ** 2) / 2 + b) / (n_b / 2 + a - 1)
+
+                # R: max(abs(g_new - g_old)/g_old, abs(d_new - d_old)/d_old)
+                rel = np.concatenate([np.abs(g_new - g_old) / g_old,
+                                      np.abs(d_new - d_old) / d_old])
+                change = np.nanmax(rel) if np.any(~np.isnan(rel)) else 0.0
+                if count > 30 and change > change_old:
+                    warnings.warn(
+                        "Empirical Bayes step failed to converge after 30 "
+                        "iterations, using estimate before change between "
+                        "iterations increases.", RuntimeWarning, stacklevel=4,
+                    )
+                    break
+                g_old, d_old = g_new, d_new
+                change_old = change
+                if not change > _EB_CONV:
+                    break
+
+        # degenerate priors (e.g. identical delta_hat in all features): keep L/S
+        ok = np.isfinite(g_new) & np.isfinite(d_new)
+        gamma_star[i] = np.where(ok, g_new, g_hat)
+        delta_star[i] = np.where(ok, d_new, d_hat)
+        for key, val in zip(('gamma_bar', 't2', 'a', 'b'), (g_bar, t2, a, b)):
+            priors[key][i] = val
+
+    return gamma_star, delta_star, priors
+
+
 # ---------------------------------------------------------------------------
 # Apply pre-trained estimates to new data
 # ---------------------------------------------------------------------------
@@ -773,7 +928,8 @@ def comcat_from_training(
     verbose   : print progress
 
     The optional extensions used in training (preserve_df, nuisance_scale,
-    residual_delta) are applied with the training estimates.
+    residual_delta) are applied with the training estimates, and so are the
+    empirical Bayes site effects when the training used eb.
 
     Returns
     -------
@@ -787,11 +943,16 @@ def comcat_from_training(
     batch = np.asarray(batch).ravel()
     n_subjects = len(batch)
 
-    # Unpack estimates
+    # Unpack estimates; the site effects applied in training are the empirical
+    # Bayes estimates when present (older dicts only have the L/S estimates)
     grand_mean        = estimates['grand_mean']
     std_pooled        = estimates['std_pooled']
-    gamma_hat_masked  = estimates['gamma_hat_masked']
-    delta_hat_masked  = estimates['delta_hat_masked']
+    gamma_masked      = estimates.get('gamma_star_masked')
+    if gamma_masked is None:
+        gamma_masked = estimates['gamma_hat_masked']
+    delta_masked      = estimates.get('delta_star_masked')
+    if delta_masked is None:
+        delta_masked = estimates['delta_hat_masked']
     beta_hat_preserve = estimates['beta_hat_preserve']
     ind_mask          = estimates['ind_mask']
     ind_nan           = estimates['ind_nan']
@@ -869,7 +1030,7 @@ def comcat_from_training(
                     if scale_model is not None else None)
 
     batches_new = [np.where(batch_idx == i)[0] for i in range(n_batch)]
-    delta_ref = delta_hat_masked[ref_level, :] if ref_level is not None else None
+    delta_ref = delta_masked[ref_level, :] if ref_level is not None else None
     Ym_adj = Ym_std.copy()
     for i in range(n_batch):
         idx = batches_new[i]
@@ -877,9 +1038,9 @@ def comcat_from_training(
             continue
         if ref_level is not None and i == ref_level:
             continue
-        delta_i = delta_hat_masked[i, :] if delta_ref is None else delta_hat_masked[i, :] / delta_ref
+        delta_i = delta_masked[i, :] if delta_ref is None else delta_masked[i, :] / delta_ref
         denom = np.sqrt(delta_i)[:, None] * np.ones((1, len(idx)))
-        numer = Ym_std[:, idx] - (X_nuisance_new[idx, :] @ gamma_hat_masked).T
+        numer = Ym_std[:, idx] - (X_nuisance_new[idx, :] @ gamma_masked).T
         if scale_factor is not None:
             numer /= scale_factor[:, idx]
         Ym_adj[:, idx] = numer / denom

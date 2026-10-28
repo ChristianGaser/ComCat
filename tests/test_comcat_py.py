@@ -14,6 +14,9 @@ Workflow
 Each test case loads the MATLAB-generated inputs, runs comcat.py on the
 same inputs, and compares the harmonized output against the MATLAB result.
 
+comcat.m has no empirical Bayes step, so the multi-site cases are run with
+eb=False.
+
 Tolerances
 ----------
 MATLAB uses single-precision for Y internally (single(Y)) while this
@@ -80,7 +83,7 @@ def test_case1():
 
     # MATLAB batch is 1-based; comcat.py recodes internally, so pass as-is
     Yh_py, bh_py, gh_py, dh_py = comcat(
-        Y, batch, Z, X, mean_only=False, verbose=False,
+        Y, batch, Z, X, mean_only=False, verbose=False, eb=False,
     )
 
     check_close("Y_harmonized", Yh_py, d['Yh1'])
@@ -114,7 +117,7 @@ def test_case3():
     Y, batch, X = d['Y3'], d['batch3'].astype(int), d['X3']
 
     Yh_py, bh_py, gh_py, dh_py = comcat(
-        Y, batch, None, X, mean_only=True, verbose=False
+        Y, batch, None, X, mean_only=True, verbose=False, eb=False,
     )
 
     check_close("Y_harmonized", Yh_py, d['Yh3'])
@@ -132,7 +135,7 @@ def test_case4():
 
     Yh_py, bh_py, gh_py, dh_py = comcat(
         Y, batch, Z[:, np.newaxis], X[:, np.newaxis],
-        mean_only=False, verbose=False,
+        mean_only=False, verbose=False, eb=False,
     )
 
     check_close("Y_harmonized", Yh_py, d['Yh4'])
@@ -153,7 +156,7 @@ def test_case5():
 
     Yh_py, bh_py, gh_py, dh_py = comcat(
         Y, batch, Z, X[:, np.newaxis],
-        mean_only=False, verbose=False,
+        mean_only=False, verbose=False, eb=False,
     )
 
     check_close("Y_harmonized", Yh_py, d['Yh5'])

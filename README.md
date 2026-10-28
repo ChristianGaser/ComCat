@@ -20,6 +20,7 @@ ComCAT is a Python toolkit for **harmonizing multi-site neuroimaging data**. It 
   - [`comcat()` — harmonize data](#comcat--harmonize-data)
   - [`comcat_from_training()` — apply to new data](#comcat_from_training--apply-to-new-data)
   - [Nuisance modelling: B-spline GAM](#nuisance-modelling-b-spline-gam)
+  - [Empirical Bayes (default)](#empirical-bayes-default)
   - [Optional model extensions](#optional-model-extensions)
 - [File I/O Interface — `comcat_ui.py`](#file-io-interface--comcat_uipy)
   - [Python usage](#python-usage)
@@ -45,7 +46,7 @@ ComCAT implements a harmonization model that:
 2. **Regresses out nuisance covariates** (e.g., image quality metrics, total intracranial volume) using B-spline GAM smoothing.
 3. **Preserves biological covariates of interest** (e.g., age, group) so they are not inadvertently removed.
 
-The method is equivalent to ComBat when only batch correction is requested (except that no emprical Bayes is implemented), and extends it with flexible nuisance modelling when covariates are provided.
+When only batch correction is requested, ComCAT is ComBat with empirical Bayes: it agrees with `combat_family.combat_eb()`, the port of the R package ComBatFamily, to ~1e-13. With nuisance covariates it extends ComBat with flexible nuisance modelling, and the empirical Bayes step is applied to the site effects.
 
 If you are interested in ComCat's theoretical background, you can read about it [here](ComCat-Theory.md).
 
@@ -118,14 +119,15 @@ Y_harmonized, beta_hat, gamma_hat, delta_hat = comcat(
 |---|---|---|
 | `Y_harmonized` | `(n_features, n_subjects)` | Harmonized data |
 | `beta_hat` | `(n_params, n_features)` | Full design-matrix coefficients |
-| `gamma_hat` | `(n_batch+n_Z, n_features)` | Additive batch/nuisance effects |
-| `delta_hat` | `(n_batch, n_features)` | Multiplicative batch effects |
+| `gamma_hat` | `(n_batch+n_Z, n_features)` | Additive batch/nuisance effects removed from the data (empirical Bayes estimates in the site rows when `eb=True`) |
+| `delta_hat` | `(n_batch, n_features)` | Multiplicative batch effects removed from the data (empirical Bayes estimates when `eb=True`) |
 
 **Key parameters**
 
 | Parameter | Default | Description |
 |---|---|---|
 | `mean_only` | `False` | Adjust mean only; skip variance scaling |
+| `eb` | `True` | Empirical Bayes estimation of the site effects, as in ComBat (used with ≥ 2 sites); `False` gives the L/S estimates of earlier versions |
 | `ref_batch` | `None` | Site label to treat as reference (its data is left untouched; the other sites are harmonized to its mean and variance) |
 | `return_estimates` | `False` | Return a 5th element (dict) for use with `comcat_from_training()` |
 | `smooth_term_bounds` | `None` | Explicit boundary knots for the nuisance splines |
@@ -177,12 +179,58 @@ train/test workflows, `smooth_term_bounds` (explicit knot bounds).
 
 When `gam_df=None` (default), the value is auto-selected as `min(10, max(5, n // 30))`.
 
+### Empirical Bayes (default)
+
+With at least two sites, the additive (γ) and multiplicative (δ) site effects are
+estimated with the parametric empirical Bayes method of ComBat (Johnson et al., 2007).
+For every site, the effects of all features are assumed to come from common priors,
+and each feature's estimate is shrunk towards them. The shrinkage is strong when a site
+has few subjects or its estimates are noisy, and negligible for large sites. The maths
+is in [ComCat-Theory.md](ComCat-Theory.md#empirical-bayes-estimation-of-site-effects),
+and the tests are in `tests/test_comcat_eb.py`.
+
+- **On by default** (`eb=True`). `eb=False` reproduces the results of earlier versions
+  bit for bit. With a single site (or `batch=None`), EB is not used.
+- **What is shrunk.** ComCAT's site coefficients contain an offset from the nuisance
+  model. They are therefore shrunk as differences to the size-weighted mean of the
+  sites (or to `ref_batch`), which are ComBat's site effects. A reference site keeps its
+  estimates, and sites with one subject are left out.
+- **Without nuisance covariates** the result equals ComBat with EB
+  (`combat_family.combat_eb()`) to ~1e-13.
+- **Estimates.** `comcat()` returns the applied (EB) `gamma_hat` / `delta_hat`. With
+  `return_estimates=True`, the dict holds the L/S estimates (`gamma_hat_masked`,
+  `delta_hat_masked`), the EB estimates (`gamma_star_masked`, `delta_star_masked`)
+  and the priors (`eb_priors`). `comcat_from_training()` applies the EB estimates.
+- **Output folder.** `comcat_ui()` adds `_eb` after `_sites`, for example
+  `comcat_sites_eb_preserve1_nuisance7_gam5`. EB results therefore never overwrite
+  results of earlier versions. CLI: `--no-eb`.
+
+Why it matters: with small sites, the L/S variance δ is estimated from a handful of
+values, and dividing by it can blow up single features. On real data (gray matter,
+8 mm), EB gave these results:
+
+| Test | L/S | EB |
+|---|---|---|
+| Buchert, one scan per scanner held out, sites only: spread of held-out scans vs raw | 5,364× (training sites with 2–3 scans) | 0.55× |
+| ON-Harmony, one subject held out, sites only: within-subject / total variance (raw 0.074) | 0.112 | 0.083 |
+| ADNI with IQMs, in-sample: 99th percentile of harmonized values at a site with two subjects | 17.5 SD | 1.5 SD |
+| Split halves, 5 samples: error of the site variances | — | 26–87% lower |
+| Split halves, without IQMs: error of the site locations | — | 9–72% lower |
+
+Switching EB on changes the in-sample harmonized data (RMS, in SD units of each feature)
+by ≤ 0.05 for sites with more than 50 subjects, 0.03–0.16 for 11–50 subjects, 0.06–0.23
+for 6–10 subjects, and 0.09–0.7 for 2–5 subjects, where the L/S estimates are unreliable.
+
+Limitation: some IQMs vary almost only between sites, for example `res_RMS`, which is set
+by the protocol. With such IQMs, the site levels at fixed IQM are not identified, so the
+location shrinkage has almost no effect. The variance shrinkage still applies.
+
 ### Optional model extensions
 
-Three options extend the model. All are **off by default**: without them, `comcat()`
-and `comcat_ui()` give bit-identical results to earlier versions. The maths is in
-[ComCat-Theory.md](ComCat-Theory.md#optional-extensions), and the behaviour is tested in
-`tests/test_comcat_options.py`.
+Three options extend the model. All are **off by default**: without them and with
+`eb=False`, `comcat()` and `comcat_ui()` give bit-identical results to earlier versions.
+The maths is in [ComCat-Theory.md](ComCat-Theory.md#optional-extensions), and the
+behaviour is tested in `tests/test_comcat_options.py`.
 
 | Option | Default | What it does | Output folder suffix |
 |---|---|---|---|
@@ -247,7 +295,8 @@ Y_harm, *_, est = comcat(Y, batch, nuisance=iqm, preserve=age[:, None],
 print(np.nanmean(est['scale_p'] < 0.05))   # share of features with IQM-dependent variance
 ```
 
-These options are not available in `decentralized_comcat.py`.
+These options are not available in `decentralized_comcat.py`. Empirical Bayes is: it
+runs on the aggregator and needs no additional data from the sites.
 
 ---
 
@@ -296,9 +345,10 @@ python comcat_ui.py --help
 Harmonized files are saved into an auto-generated subfolder next to the input files. The folder name encodes the harmonization settings, for example:
 
 ```
-comcat_sites_preserve1_nuisance1_gam6/
-combat_sites/
-comcat_nuisance2_linear/
+comcat_sites_eb_preserve1_nuisance1_gam6/   # sites + nuisance, empirical Bayes (default)
+comcat_sites_preserve1_nuisance1_gam6/      # the same with eb=False (earlier versions)
+combat_sites_eb/
+comcat_nuisance2_gam6/                      # single site: no empirical Bayes
 ```
 
 Override the folder name with the `subfolder` parameter. For MAT/TXT files, the output file is placed inside the subfolder with the same file name.
@@ -448,6 +498,7 @@ Results are stored as arrays of shape `(n_a2, n_a4, n_nuisance, n_methods)` for 
 |---|---|---|
 | `tests/test_comcat_py.py` | MATLAB reference files | Python port vs `comcat.m` (below) |
 | `tests/test_comcat_options.py` | — | Optional extensions on simulated data with known effects; defaults unchanged; `comcat_from_training()` reproduces the in-sample result |
+| `tests/test_comcat_eb.py` | — | Empirical Bayes: equals ComBat (`combat_eb`) without nuisance; site effects and harmonized data closer to the truth than L/S in a simulation with small sites and IQMs; `ref_batch`; `comcat_from_training()` |
 | `tests/test_combat_family.py` | R + ComBatFamily (optional) | CovBat / ComBatLS / ComBat-EB properties and agreement with the R package |
 
 ### `test_comcat_py.py`
@@ -549,6 +600,7 @@ comcat(
     preserve_bounds = None,     # (lo, hi) or [(lo0,hi0), ...] per preserve column
     nuisance_scale = False,     # also remove nuisance-dependent variance
     residual_delta = False,     # site variances from residuals (as ComBat)
+    eb             = True,      # empirical Bayes estimation of site effects (as ComBat)
 )
 ```
 
@@ -570,6 +622,7 @@ comcat_ui(
     preserve_bounds = None,
     nuisance_scale = False,
     residual_delta = False,
+    eb             = True,
 )
 ```
 

@@ -21,6 +21,9 @@ Design notes
 * Assumes the federated topology of Bostami et al.: **each site holds exactly one
   batch** (so per-batch variance is computed locally).  Nuisance terms use GAM
   B-splines (smooth columns) or plain linear terms (the rest).
+* Empirical Bayes (eb=True, the default of comcat()) runs on the aggregator: it
+  needs only the site effects gamma, the per-batch variances and the site sizes,
+  which the protocol already exchanges.
 
 See tests/DECENTRALIZED-GAM-DESIGN.md for the full design.
 """
@@ -31,7 +34,7 @@ import numpy as np
 from numpy.linalg import pinv
 from statsmodels.gam.api import BSplines
 
-from comcat import comcat_from_training, _to_col_matrix
+from comcat import comcat_from_training, _eb_site_effects, _to_col_matrix
 
 
 # ---------------------------------------------------------------------------
@@ -196,21 +199,25 @@ def site_round3(Y_site, batch_idx, nuis_exp, preserve_site, ind_mask, n_batch,
 
 
 def aggregate_gamma_delta(stats3, n_batch, n_Z, n_valid, n, mean_only=False):
+    """Returns gamma, delta and the per-batch variances (needed by empirical
+    Bayes also when mean_only sets delta to 1)."""
     G2 = sum(s[0] for s in stats3)
     b2 = sum(s[1] for s in stats3)
     gamma = pinv(G2) @ b2
+    site_var = np.zeros((n_batch, n_valid), dtype=np.float64)
+    for _, _, (bidx, dvar), _, _ in stats3:
+        site_var[bidx, :] = dvar                            # batch rows (local)
     delta = np.zeros((n_batch + n_Z, n_valid), dtype=np.float64)
     if mean_only:
         delta[:] = 1.0
-        return gamma, delta
-    for _, _, (bidx, dvar), _, _ in stats3:
-        delta[bidx, :] = dvar                               # batch rows (local)
+        return gamma, delta, site_var
+    delta[:n_batch] = site_var
     if n_Z > 0:                                             # nuisance rows = pooled var
         S1 = sum(s[3] for s in stats3)
         S2 = sum(s[4] for s in stats3)
         var_pooled = (S2 - S1 ** 2 / n) / (n - 1)
         delta[n_batch:, :] = var_pooled[None, :]
-    return gamma, delta
+    return gamma, delta, site_var
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +226,7 @@ def aggregate_gamma_delta(stats3, n_batch, n_Z, n_valid, n, mean_only=False):
 
 def decentralized_fit(site_Y, site_batch_idx, site_nuisance, site_preserve,
                       batch_levels, smooth_cols=None, gam_df=None, degree=3,
-                      mean_only=False):
+                      mean_only=False, eb=True):
     n_sites = len(site_Y)
     n_batch = len(batch_levels)
     n_nuis_orig = 0 if site_nuisance[0] is None else _to_col_matrix(
@@ -258,7 +265,19 @@ def decentralized_fit(site_Y, site_batch_idx, site_nuisance, site_preserve,
     s3 = [site_round3(site_Y[k], site_batch_idx[k], nuis_exp[k], site_preserve[k],
                       ind_mask, n_batch, n_Z, beta_preserve, grand_mean, std_pooled)
           for k in range(n_sites)]
-    gamma, delta = aggregate_gamma_delta(s3, n_batch, n_Z, n_valid, n, mean_only)
+    gamma, delta, site_var = aggregate_gamma_delta(s3, n_batch, n_Z, n_valid, n, mean_only)
+
+    # Empirical Bayes on the aggregator (as comcat(eb=True)) ---------------------
+    use_eb = eb and n_batch > 1 and n_valid > 1
+    gamma_star = delta_star = eb_priors = None
+    if use_eb:
+        n_batches = np.zeros(n_batch, dtype=int)
+        for k in range(n_sites):
+            n_batches[site_batch_idx[k]] += s0[k][0]
+        gamma_star, delta_sites, eb_priors = _eb_site_effects(gamma, site_var, n_batches)
+        delta_star = delta.copy()
+        if not mean_only:
+            delta_star[:n_batch] = delta_sites
 
     estimates = {
         'grand_mean': grand_mean,
@@ -277,6 +296,10 @@ def decentralized_fit(site_Y, site_batch_idx, site_nuisance, site_preserve,
         'smooth_term_bounds': None,                         # constructors override
         'gam_df': specs[smooth_cols[0]]['df'] if smooth_cols else 5,
         'spline_constructors': constructors,
+        'eb': use_eb,
+        'gamma_star_masked': gamma_star,
+        'delta_star_masked': delta_star,
+        'eb_priors': eb_priors,
     }
     return estimates
 
@@ -322,10 +345,6 @@ def main():
         Y[:, idx] += rng.normal(0.3 * k, 0.1, (n_features, 1))
         Y[:, idx] *= rng.normal(1.0 + 0.2 * k, 0.1, (n_features, 1))
 
-    # centralized reference (GAM on age — always applied)
-    Y_central, *_ = comcat(Y, batch, nuisance=age, preserve=score,
-                           mean_only=False, verbose=False)
-
     # decentralized: partition by site, never pool raw Y
     idxs = [np.where(batch == k)[0] for k in range(len(sizes))]
     site_Y = [Y[:, ix] for ix in idxs]
@@ -334,34 +353,43 @@ def main():
     site_batch_idx = list(range(len(sizes)))
     batch_levels = list(range(len(sizes)))
 
-    out, est = decentralized_harmonize(site_Y, site_batch_idx, site_nuis, site_pres,
-                                       batch_levels)
-    Y_dec = np.zeros_like(Y_central)
-    for k, ix in enumerate(idxs):
-        Y_dec[:, ix] = out[k]
-
-    # --- bitwise check of the GAM basis itself --------------------------------
-    from comcat import _build_nuisance_basis
-    central_basis, _ = _build_nuisance_basis(age[:, None], None,
-                                             est['gam_df'], False)
-    dec_basis = est['spline_constructors'][0].transform(age[:, None])
-    basis_bitwise = np.array_equal(central_basis, dec_basis)
-
-    finite = np.isfinite(Y_central) & np.isfinite(Y_dec)
-    max_abs = np.abs(Y_central[finite] - Y_dec[finite]).max()
-    rel = max_abs / (np.abs(Y_central[finite]).max() + 1e-30)
-
     print("=" * 66)
     print("Decentralized ComCAT — GAM (Mode A), 3 sites, preserve=score")
     print("=" * 66)
     print(f"  features / subjects     : {n_features} / {n}  (sites {sizes})")
-    print(f"  gam_df (from total n)   : {est['gam_df']}")
-    print(f"  GAM basis bitwise-equal : {basis_bitwise}")
-    print(f"  max |central - decentral|: {max_abs:.3e}")
-    print(f"  relative to data scale   : {rel:.3e}")
-    print(f"  nan layout matches       : {np.array_equal(np.isnan(Y_central), np.isnan(Y_dec))}")
+    ok = True
+    for eb in (True, False):
+        # centralized reference (GAM on age — always applied)
+        Y_central, *_ = comcat(Y, batch, nuisance=age, preserve=score,
+                               mean_only=False, verbose=False, eb=eb)
+
+        out, est = decentralized_harmonize(site_Y, site_batch_idx, site_nuis,
+                                           site_pres, batch_levels, eb=eb)
+        Y_dec = np.zeros_like(Y_central)
+        for k, ix in enumerate(idxs):
+            Y_dec[:, ix] = out[k]
+
+        # --- bitwise check of the GAM basis itself ----------------------------
+        from comcat import _build_nuisance_basis
+        central_basis, _ = _build_nuisance_basis(age[:, None], None,
+                                                 est['gam_df'], False)
+        dec_basis = est['spline_constructors'][0].transform(age[:, None])
+        basis_bitwise = np.array_equal(central_basis, dec_basis)
+
+        finite = np.isfinite(Y_central) & np.isfinite(Y_dec)
+        max_abs = np.abs(Y_central[finite] - Y_dec[finite]).max()
+        rel = max_abs / (np.abs(Y_central[finite]).max() + 1e-30)
+
+        print("-" * 66)
+        print(f"  empirical Bayes (eb)    : {eb}")
+        print(f"  gam_df (from total n)   : {est['gam_df']}")
+        print(f"  GAM basis bitwise-equal : {basis_bitwise}")
+        print(f"  max |central - decentral|: {max_abs:.3e}")
+        print(f"  relative to data scale   : {rel:.3e}")
+        print(f"  nan layout matches       : "
+              f"{np.array_equal(np.isnan(Y_central), np.isnan(Y_dec))}")
+        ok = ok and basis_bitwise and max_abs < 1e-8
     print("-" * 66)
-    ok = basis_bitwise and max_abs < 1e-8
     print("  RESULT: " + ("PASS — basis bitwise, output within machine precision"
                           if ok else "FAIL"))
     print("=" * 66)

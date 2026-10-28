@@ -61,13 +61,46 @@ Estimating $\hat{\delta}_{i,v}^2$ from the within-site variance directly — wit
 > **Note.** Because $\hat{\delta}_{i,v}^2$ includes the variance explained by the nuisance effects, dividing the nuisance-adjusted residuals by it also reduces the residual variance itself. The optional `residual_delta` estimator (see *Optional extensions*) estimates $\hat{\delta}_{i,v}^2$ after removing the nuisance effects, as ComBat does.
 
 
+#### Empirical Bayes estimation of site effects
+
+With at least two sites, the site parameters are by default (`eb=True`) estimated with the parametric empirical Bayes method of ComBat (Johnson et al., 2007). With few subjects per site, the L/S estimates $\hat{\gamma}_{i,v}$ and $\hat{\delta}_{i,v}^2$ are noisy, and dividing by a variance estimated from a handful of values can amplify the data of single features many times. Empirical Bayes borrows information across features.
+
+The site rows of $\hat{\gamma}_v$ are the site levels at the zero of the nuisance basis relative to the grand mean. They therefore share a per-feature offset that belongs to the nuisance model and differs between features. Shrinking them directly would leave a site-dependent fraction of this offset in the data. They are first expressed as differences to the size-weighted mean of the sites,
+
+$$\hat{\gamma}^{c}_{i,v} = \hat{\gamma}_{i,v} - \sum_{k} \frac{n_k}{N}\,\hat{\gamma}_{k,v},$$
+
+which are the site effects of ComBat when the nuisance covariates are part of its standardization model. With a reference site $r$, the differences to site $r$ are used. For every site, the effects of all features are assumed to come from common priors,
+
+$$\gamma^{c}_{i,v} \sim N\left(\bar{\gamma}_i, \bar{\tau}_i^2\right), \qquad \delta_{i,v}^2 \sim \text{InvGamma}\left(\lambda_i, \theta_i\right),$$
+
+whose hyperparameters are estimated by the method of moments from $\hat{\gamma}^{c}_{i,v}$ and $\hat{\delta}_{i,v}^2$ over all features. The posterior means are found by iterating
+
+$$\gamma^{*}_{i,v} = \frac{n_i\bar{\tau}_i^2\,\hat{\gamma}^{c}_{i,v} + \delta^{2*}_{i,v}\,\bar{\gamma}_i}{n_i\bar{\tau}_i^2 + \delta^{2*}_{i,v}}, \qquad \delta^{2*}_{i,v} = \frac{\theta_i + \frac{1}{2}\left[(n_i - 1)\,\hat{\delta}_{i,v}^2 + n_i\left(\hat{\gamma}^{c}_{i,v} - \gamma^{*}_{i,v}\right)^2\right]}{n_i/2 + \lambda_i - 1}$$
+
+until the largest relative change is below $10^{-4}$, with the stopping rule of ComBat. The bracket is the sum of squares of the standardized data of site $i$ around $\gamma^{*}_{i,v}$, written in terms of the sufficient statistics $\hat{\gamma}$ and $\hat{\delta}^2$. The same step therefore applies to every estimator of $\hat{\delta}^2$: the default, `residual_delta` and `nuisance_scale`. It also runs on the aggregator in the decentralized version. The common offset is added back to $\gamma^{*}_{i,v}$, and the result replaces the site rows of $\hat{\gamma}_v$ in the adjustment below, as $\delta^{2*}_{i,v}$ replaces $\hat{\delta}_{i,v}^2$. With `mean_only`, $\delta^{2*}$ enters the posterior of $\gamma$, but the data are not scaled. A reference site keeps its L/S estimates because its data are not changed. Sites with a single subject are left out.
+
+Without nuisance covariates, $\hat{\gamma}$, $\hat{\delta}^2$ and the standardization are those of ComBat. ComCat then equals ComBat with empirical Bayes: it agrees with `combat_family.combat_eb()`, the port of the R package ComBatFamily, to ~1e-13 (`tests/test_comcat_eb.py`).
+
+*Limits.* The prior variance $\bar{\tau}_i^2$ is the variance of the estimates, which includes their sampling variance, and the posterior assumes that $\hat{\gamma}^{c}_{i,v}$ has the variance $\delta^2_{i,v}/n_i$ of a site mean. With nuisance covariates that differ between sites, the site levels at fixed nuisance are estimated less precisely than that, so the location effects are shrunk less than they should be. Some IQMs vary almost only between sites, for example `res_RMS`, a property of the protocol with 2–63 distinct values in the samples below. For such IQMs the site levels at fixed nuisance are not identified. Their L/S estimates then vary widely between features, $\bar{\tau}_i^2$ becomes very large, and the location shrinkage vanishes. The scale shrinkage is not affected.
+
+*Evaluation on real data* (gray matter, 8 mm; ON-Harmony, Buchert, ABIDE, NormSample, ADNI):
+
+- **Split halves.** The subjects of every site were split into random halves. L/S and EB were fitted on one half and compared with L/S on the other, independent half, 10 splits.
+  - Site variances: EB reduced the estimated error by 26–87% in all samples, with and without the 7 CAT12 IQMs.
+  - Site locations without IQMs: EB reduced the error by 9–72%. With the IQMs, the reduction was 17% (ON-Harmony), 26% (ADNI) and 0% (Buchert, ABIDE, NormSample), as explained above.
+- **Held-out traveling subjects, sites only.** Buchert is one subject on 116 scanners; one scan per scanner was held out.
+  - Buchert: with L/S, the spread of the held-out scans was 5,364 times that of the raw data, because 1/δ̂ explodes for scanners with 2–3 training scans. With EB it was 0.55 times.
+  - ON-Harmony, leaving one subject out: within-subject / total variance was 0.074 raw, 0.112 with L/S and 0.083 with EB.
+- **In-sample.** In ADNI with IQMs, the 99th percentile of the harmonized values at a site with two subjects lay 17.5 SD from the voxel mean with L/S, and 1.5 SD with EB.
+
+
 #### Data adjustment
 
 For each batch $i$, the adjustment is:
 
-$$Y_{v,\text{batch}=i}^{\text{adj}} = \frac{Y_{v,\text{batch}=i}^{\text{std}} - [\mathbf{B}\ \tilde{\mathbf{Z}}]_{\text{batch}=i}\hat{\gamma}_v}{\sqrt{\hat{\delta}_{i,v}^2}}$$
+$$Y_{v,\text{batch}=i}^{\text{adj}} = \frac{Y_{v,\text{batch}=i}^{\text{std}} - [\mathbf{B}\ \tilde{\mathbf{Z}}]_{\text{batch}=i}\gamma^{*}_v}{\sqrt{\delta^{2*}_{i,v}}}$$
 
-The subtraction term removes both the batch-specific additive shift and the smooth nuisance contributions simultaneously, since the full $\hat{\gamma}_v$ vector is applied via the combined design matrix $[\mathbf{B}\ \tilde{\mathbf{Z}}]$.
+where $\gamma^{*}_v$ is $\hat{\gamma}_v$ with the site rows replaced by their empirical Bayes estimates. With `eb=False` or a single site, $\gamma^{*}_v = \hat{\gamma}_v$ and $\delta^{2*}_{i,v} = \hat{\delta}_{i,v}^2$. The subtraction term removes both the batch-specific additive shift and the smooth nuisance contributions simultaneously, since the full $\gamma^{*}_v$ vector is applied via the combined design matrix $[\mathbf{B}\ \tilde{\mathbf{Z}}]$.
 
 
 #### Rescaling to original units
@@ -87,14 +120,14 @@ $$\bar{\mu}_v = \frac{1}{N_r} \sum_{j \in r} [\mathbf{B}\ \tilde{\mathbf{Z}}]_j 
 
 and the other sites are scaled to the variance of site $r$ instead of the pooled variance:
 
-$$Y_{v,\text{batch}=i}^{\text{adj}} = \frac{Y_{v,\text{batch}=i}^{\text{std}} - [\mathbf{B}\ \tilde{\mathbf{Z}}]_{\text{batch}=i}\hat{\gamma}_v}{\sqrt{\hat{\delta}_{i,v}^2 / \hat{\delta}_{r,v}^2}}$$
+$$Y_{v,\text{batch}=i}^{\text{adj}} = \frac{Y_{v,\text{batch}=i}^{\text{std}} - [\mathbf{B}\ \tilde{\mathbf{Z}}]_{\text{batch}=i}\gamma^{*}_v}{\sqrt{\delta^{2*}_{i,v} / \hat{\delta}_{r,v}^2}}$$
 
-With `residual_delta` (see *Optional extensions*), the residual variance of every harmonized site then equals that of the reference site. With the default $\hat{\delta}$, this holds only if the nuisance terms explain the same share of the within-site variance at both sites.
+With empirical Bayes, the location effects of the other sites are shrunk as differences to site $r$. The variance $\hat{\delta}_{r,v}^2$ of site $r$ is not shrunk, because it is the variance of its unchanged data. With `residual_delta` (see *Optional extensions*), the residual variance of every harmonized site then equals that of the reference site, up to the shrinkage of $\delta^{2*}_{i,v}$. With the default $\hat{\delta}$, this holds only if the nuisance terms explain the same share of the within-site variance at both sites.
 
 
 #### Optional extensions
 
-Three extensions can be enabled in `comcat()` / `comcat_ui()`. All are off by default; the default output is identical to the model described above.
+Three extensions can be enabled in `comcat()` / `comcat_ui()`. All are off by default; the default output is identical to the model described above. Empirical Bayes applies to each of them.
 
 **1. Flexible preserved covariates (`preserve_df`).** Each continuous preserved covariate $x_r$ (at least `preserve_df` + 2 distinct values) is expanded into the same kind of B-spline basis as the nuisance covariates, $x_r \mapsto \tilde{\mathbf{X}}_r = [b_1(x_r), \ldots, b_d(x_r)]$; binary or categorical covariates stay linear. Estimation is unchanged, with $\tilde{\mathbf{X}}$ in place of $\mathbf{X}$ in the joint model, and the preserved effect $\tilde{\mathbf{X}}_j\hat{\boldsymbol{\beta}}_{\tilde{X},v}$ is added back.
 

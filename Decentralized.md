@@ -36,7 +36,10 @@ and is the reference this module reproduces.
   B-spline GAM, matching centralized ComCAT (which always uses GAM).
 - **`ref_batch` is not supported** in this module (all sites are harmonized to the
   pooled grand mean). Everything else — `preserve` covariates, `mean_only`,
-  the common feature mask — works as in `comcat()`.
+  the common feature mask, empirical Bayes (`eb=True`, the default of `comcat()`) —
+  works as in `comcat()`. The empirical Bayes step runs on the aggregator and needs
+  only γ, the per-batch variances and the site sizes, which the rounds below already
+  exchange.
 - Requires `statsmodels` (for the B-spline basis).
 
 ---
@@ -111,6 +114,7 @@ estimates = decentralized_fit(
     gam_df=None,        # default: min(10, max(5, n_total // 30))
     degree=3,
     mean_only=False,
+    eb=True,            # empirical Bayes on the aggregator, as comcat()
 )
 
 # 2) APPLY — each site harmonizes its own data locally with the shared estimates.
@@ -138,6 +142,7 @@ unmodified [`comcat_from_training()`](comcat.py).
 | `smooth_cols` | nuisance column indices to model with GAM (default: all) |
 | `gam_df` | B-spline basis dimension (default: sample-size heuristic on pooled `n`) |
 | `mean_only` | adjust mean only, no variance scaling |
+| `eb` | empirical Bayes estimation of the site effects (default `True`, as `comcat()`) |
 
 ---
 
@@ -148,10 +153,10 @@ Verified by the module's self-test (`python decentralized_comcat.py`):
 - **GAM B-spline basis: bitwise-identical** to centralized — the aggregator
   reconstructs statsmodels' exact knot vector from the pooled unique covariate
   values.
-- **Overall harmonized output: ~1e-13** vs. centralized. The small residual comes
-  from decentralized regression using the normal-equations form
-  `pinv(ΣXᵢᵀXᵢ)·ΣXᵢᵀYᵢ` (the same machine-precision behaviour reported in Bostami
-  et al., 3e-15).
+- **Overall harmonized output: ~1e-13** vs. centralized, with and without
+  empirical Bayes. The small residual comes from decentralized regression using the
+  normal-equations form `pinv(ΣXᵢᵀXᵢ)·ΣXᵢᵀYᵢ` (the same machine-precision behaviour
+  reported in Bostami et al., 3e-15).
 
 ---
 

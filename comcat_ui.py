@@ -139,15 +139,19 @@ def _build_subfolder(
     preserve_df: int | None = None,
     nuisance_scale: bool = False,
     residual_delta: bool = False,
+    eb: bool = False,
 ) -> str:
-    """Folder name encoding the settings; defaults give the names used before
-    the optional extensions existed."""
+    """Folder name encoding the settings.  Without empirical Bayes and the
+    optional extensions, the names are those of earlier versions; empirical
+    Bayes adds '_eb' after '_sites', so its results never replace them."""
     if n_sites > 1 and n_nuisance == 0:
         sf = 'combat'
     else:
         sf = 'comcat'
     if n_sites > 1:
         sf += f'_sites'
+        if eb:
+            sf += '_eb'
     if n_preserve > 0:
         sf += f'_preserve{n_preserve}'
         if preserve_df is not None:
@@ -187,6 +191,7 @@ def comcat_ui(
     preserve_bounds=None,
     nuisance_scale: bool = False,
     residual_delta: bool = False,
+    eb: bool = True,
 ):
     """
     Run ComCAT on a list of image/data files and save harmonized results.
@@ -207,6 +212,11 @@ def comcat_ui(
     smooth_term_bounds : boundary knots; None infers from data (fine for single-dataset use).
     gam_df        : B-spline basis dimension per nuisance column.
                     None (default) — auto-selected from sample size: min(10, max(5, n//30)).
+    eb            : empirical Bayes estimation of the site effects, as in ComBat
+                    (default True; used with at least two sites).  Folder suffix
+                    '_eb' after '_sites'; eb=False reproduces earlier results and
+                    folder names.  With save_estimates, the saved gamma/delta are
+                    the empirical Bayes estimates that were applied.
 
     Optional extensions (off by default; see comcat.py for details)
     preserve_df   : B-spline df for continuous preserve covariates; 'same' = gam_df.
@@ -314,11 +324,13 @@ def comcat_ui(
         preserve_bounds=preserve_bounds,
         nuisance_scale=nuisance_scale,
         residual_delta=residual_delta,
+        eb=eb,
         return_estimates=True,
     )
     nuisance_scale = estimates['nuisance_scale'] is not None   # False without nuisance
+    eb = estimates['eb']                                       # False with a single site
     options = dict(preserve_df=preserve_df, nuisance_scale=nuisance_scale,
-                   residual_delta=residual_delta)
+                   residual_delta=residual_delta, eb=eb)
 
     # guard against extreme variance changes (factor > 10)
     sd0 = np.std(Y, axis=1, ddof=1) if Y.ndim == 2 else np.std(Y, axis=0, ddof=1)
@@ -488,7 +500,8 @@ def _save_scale_test(estimates, out_dir, filetype, ref_img, verbose):
 
 
 def _save_log_mat(pth, subfolder, batch, nuisance, preserve, gam_df=6,
-                  preserve_df=None, nuisance_scale=False, residual_delta=False):
+                  preserve_df=None, nuisance_scale=False, residual_delta=False,
+                  eb=False):
     """Save a .mat log file with ComCAT parameters (mirrors MATLAB behaviour)."""
     try:
         from scipy.io import savemat
@@ -500,6 +513,7 @@ def _save_log_mat(pth, subfolder, batch, nuisance, preserve, gam_df=6,
             'preserve_df':    -1 if preserve_df is None else int(preserve_df),
             'nuisance_scale': int(nuisance_scale),
             'residual_delta': int(residual_delta or nuisance_scale),
+            'eb':             int(eb),
         }
         savemat(os.path.join(pth, subfolder + '.mat'), {'Comcat': log})
     except ImportError:
@@ -539,6 +553,9 @@ def _build_parser() -> argparse.ArgumentParser:
                    help='Also remove nuisance-dependent variance.')
     p.add_argument('--residual-delta', action='store_true',
                    help='Estimate site variances after removing nuisance effects.')
+    p.add_argument('--no-eb', action='store_true',
+                   help='Disable empirical Bayes estimation of the site effects '
+                        '(L/S estimates as in earlier versions).')
     p.add_argument('--subfolder', default=None,
                    help='Override auto-generated output subfolder name.')
     p.add_argument('--save-estimates', action='store_true',
@@ -569,6 +586,7 @@ def main(argv=None):
                      else int(args.preserve_df)),
         nuisance_scale=args.nuisance_scale,
         residual_delta=args.residual_delta,
+        eb=not args.no_eb,
     )
 
 
