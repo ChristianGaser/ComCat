@@ -132,6 +132,27 @@ SAMPLES = {
         nuisance_file = "normativeSample/tables/IQMrall2870.txt",
         preserve_file = "normativeSample/tables/age2870.txt",
     ),
+    6: dict(
+        mat_files=[
+            "/Users/gaser/Dropbox/BrainAGE/s4rp1_4mm_MR-ART436_CAT12.9.mat",
+            "/Users/gaser/Dropbox/BrainAGE/s4rp1_8mm_MR-ART436_CAT12.9.mat",
+            "/Users/gaser/Dropbox/BrainAGE/s8rp1_4mm_MR-ART436_CAT12.9.mat",
+            "/Users/gaser/Dropbox/BrainAGE/s8rp1_8mm_MR-ART436_CAT12.9.mat",
+        ],
+        nuisance_file = "MR-ART/tables/IQMrall436.txt",
+        preserve_file = "MR-ART/tables/age436.txt",
+    ),
+    7: dict(
+        mat_files=[
+            "/Users/gaser/Dropbox/BrainAGE/s4rp1_4mm_200AD_404MCI_231Normal_CAT12.9.mat",
+            "/Users/gaser/Dropbox/BrainAGE/s4rp1_8mm_200AD_404MCI_231Normal_CAT12.9.mat",
+            "/Users/gaser/Dropbox/BrainAGE/s8rp1_4mm_200AD_404MCI_231Normal_CAT12.9.mat",
+            "/Users/gaser/Dropbox/BrainAGE/s8rp1_8mm_200AD_404MCI_231Normal_CAT12.9.mat",
+        ],
+        batch_file    = "ADNI/tables/site835.txt",
+        nuisance_file = "ADNI/tables/IQMrall835.txt",
+        preserve_file = "ADNI/tables/age835.txt",
+    ),
 }
 
 # Select the sample to process (1–5).
