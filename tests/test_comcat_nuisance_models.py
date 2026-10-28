@@ -180,6 +180,29 @@ def test_screening():
     check("warning issued", any('do not vary' in str(x.message) for x in w))
 
 
+def test_single_site_location_only():
+    print("one site: location correction only, unless single_site_scale")
+    Y, site, z, age, _ = simulate()
+    one = np.ones(len(age), dtype=int)
+    a = comcat(Y, one, z, age)[0]
+    b = comcat(Y, one, z, age, mean_only=True)[0]
+    c = comcat(Y, None, z, age)[0]
+    old = comcat(Y, one, z, age, single_site_scale=True)[0]
+    check("explicit single site == mean_only == no batch",
+          np.allclose(a, b) and np.allclose(a, c), f"max_abs={np.abs(a - c).max():.1e}")
+    shrink = np.mean(np.var(old, axis=1) / np.var(a, axis=1))
+    check("single_site_scale shrinks all variance (earlier versions)", shrink < 0.95,
+          f"variance ratio {shrink:.2f}")
+    from comcat_ui import _build_subfolder
+    est = comcat(Y, one, z, age, return_estimates=True)[4]
+    name = _build_subfolder(1, 2, 1, est['mean_only'], gam_df=5)
+    check("comcat_ui folder marks location-only runs",
+          name.endswith('_meanonly_nuisance2_pspline'), name)
+    legacy = _build_subfolder(1, 2, 1, False, gam_df=5, nuisance_model='spline')
+    check("comcat_ui folder of the earlier model unchanged", legacy == 'comcat_preserve1_nuisance2_gam5',
+          legacy)
+
+
 def test_default_model():
     print("default nuisance model: penalized B-splines; the earlier spline stays available")
     Y, site, z, age, _ = simulate()
@@ -192,7 +215,7 @@ def test_default_model():
 
 
 if __name__ == '__main__':
-    tests = [test_default_model,
+    tests = [test_default_model, test_single_site_location_only,
              test_from_training_reproduces, test_pspline_smoothness,
              test_heldout_error, test_subject_terms, test_crossfit_controls, test_screening]
     for t in tests:

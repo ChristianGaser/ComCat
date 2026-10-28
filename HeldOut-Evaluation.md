@@ -1,5 +1,14 @@
 # ComCAT on held-out data: known issue and suggested fixes
 
+> **Update (2026-10-28, later):** the fixes suggested below are now options of
+> `comcat()`: `nuisance_model='linear'|'pspline'` (penalized splines, smoothing by
+> REML), `subject=` (effects within subjects), `comcat_crossfit()` (held-out
+> harmonization, optionally fitted on controls), and one site is now corrected for
+> location only (`single_site_scale=True` reproduces earlier results). The evaluation
+> on all test samples, with BrainAGE, is in the paper folder
+> (`Harmonization-Oxford/revision/`, see its README). The default `nuisance_model`
+> is still the unpenalized spline, so earlier results can be reproduced.
+
 **Status:** known issue of the default nuisance model (found 2026-10-28). It bears on reviewer issues B
 (in-sample model flexibility) and C (IQMs carry biology), and on revision tasks
 T1.1–T1.4 (permutation control, out-of-sample application, feature-level validation,

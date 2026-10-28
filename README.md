@@ -341,6 +341,8 @@ H = comcat_crossfit(
   property of the protocol: use it only where the resolution varies within the sites.
 - **Shape.** With `'pspline'`, REML chooses between linear and nonlinear effects; in
   most samples it chose nearly linear ones.
+- **One site.** Location correction only (default); the variance step would rescale all
+  residuals by about sqrt(1 - R²) of the nuisance fit.
 - **Preserved covariates** matter only for the estimation in location-only mode: the
   harmonized data are `Y - nuisance effect`, so the preserved fit cannot leak into
   BrainAGE. With a variance step, every scan is pulled toward the preserved fit at its
@@ -650,6 +652,7 @@ comcat(
     nuisance_model = 'pspline', # 'pspline' (REML, default), 'linear', 'spline' (earlier)
     nuisance_penalty = None,    # 'pspline': None/'reml', 'gcv' or a fixed penalty
     subject        = None,      # subject labels: effects estimated within subjects
+    single_site_scale = False,  # one site: True = variance step of earlier versions
 )
 ```
 

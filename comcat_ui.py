@@ -196,6 +196,7 @@ def comcat_ui(
     eb: bool = True,
     nuisance_model: str = 'pspline',
     nuisance_penalty=None,
+    single_site_scale: bool = False,
 ):
     """
     Run ComCAT on a list of image/data files and save harmonized results.
@@ -237,6 +238,9 @@ def comcat_ui(
                     or 'spline' (unpenalized B-splines of earlier versions).  Folder
                     suffix '_pspline' or '_linear'; '_gam<df>' for 'spline'.
     nuisance_penalty: smoothing parameter of 'pspline' (None/'reml', 'gcv' or a number).
+    single_site_scale: with one site (no batch), apply the variance step as earlier
+                    versions did.  Default False: one site is corrected for location
+                    only, and the folder name gets '_meanonly'.
     """
     if not files:
         raise ValueError("No input files provided.")
@@ -335,10 +339,12 @@ def comcat_ui(
         eb=eb,
         nuisance_model=nuisance_model,
         nuisance_penalty=nuisance_penalty,
+        single_site_scale=single_site_scale,
         return_estimates=True,
     )
     nuisance_scale = estimates['nuisance_scale'] is not None   # False without nuisance
     eb = estimates['eb']                                       # False with a single site
+    mean_only = estimates['mean_only']                         # True with a single site
     options = dict(preserve_df=preserve_df, nuisance_scale=nuisance_scale,
                    residual_delta=residual_delta, eb=eb, nuisance_model=nuisance_model)
 
@@ -569,6 +575,9 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Nuisance model: penalized B-splines with the smoothing parameter "
                         "estimated by REML (default), linear terms, or the unpenalized "
                         "B-splines of earlier versions.")
+    p.add_argument('--single-site-scale', action='store_true',
+                   help='With one site, apply the variance step as earlier versions '
+                        '(default: location correction only).')
     p.add_argument('--no-eb', action='store_true',
                    help='Disable empirical Bayes estimation of the site effects '
                         '(L/S estimates as in earlier versions).')
@@ -604,6 +613,7 @@ def main(argv=None):
         residual_delta=args.residual_delta,
         eb=not args.no_eb,
         nuisance_model=args.nuisance_model,
+        single_site_scale=args.single_site_scale,
     )
 
 

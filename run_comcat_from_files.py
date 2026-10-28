@@ -181,6 +181,8 @@ RESIDUAL_DELTA = False # estimate site variances after removing nuisance effects
                        # (as ComBat); implied by NUISANCE_SCALE
 NUISANCE_MODEL = 'pspline' # 'pspline' (penalized B-splines, smoothing by REML),
                        # 'linear', or 'spline' (unpenalized B-splines, earlier versions)
+SINGLE_SITE_SCALE = False  # one site: True applies the variance step of earlier
+                       # versions; False corrects the location only
 
 # ---------------------------------------------------------------------------
 # Load covariates from text files
@@ -231,6 +233,7 @@ for mat_file in MAT_FILES:
         nuisance_scale = NUISANCE_SCALE,
         residual_delta = RESIDUAL_DELTA,
         nuisance_model = NUISANCE_MODEL,
+        single_site_scale = SINGLE_SITE_SCALE,
         eb             = EB,
     )
 

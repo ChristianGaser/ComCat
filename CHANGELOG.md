@@ -45,6 +45,18 @@
   `evaluation/` and the MATLAB comparison `tests/test_comcat_py.py`. The option and EB
   tests run with the new default.
 
+### Changed — one site: location correction only
+
+- With a single site, `comcat()` now corrects the location only, also when the site is
+  given explicitly, as `comcat_ui` does when no batch is given. The variance step with
+  one site divides every residual by its SD over all subjects, which shrinks all
+  deviations by about sqrt(1 - R²) of the nuisance fit, biological variance included
+  (MR-ART: between-subject variance 0.78 → 0.64 of raw in-sample; it also flattered the
+  single-subject BrainAGE results). `single_site_scale=True` (`--single-site-scale`)
+  reproduces earlier results. `comcat_ui` folders of such runs get `_meanonly`, so
+  earlier results are not overwritten.
+- Fix: `import warnings` inside `comcat()` made `warnings` a local name.
+
 ### Added — empirical Bayes estimation of site effects (on by default)
 
 - `comcat()`: new argument `eb=True`. With at least two sites, the additive (γ) and

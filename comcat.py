@@ -129,6 +129,13 @@ subject              : None | array-like (n_subjects,) of subject labels
                        variation within subjects and cannot take up anatomy that
                        differs between subjects.  Implies mean_only=True.
                        comcat_from_training() treats its subjects as new subjects.
+single_site_scale    : bool (default False)
+                       With one site, only the location is corrected (also when the
+                       site is given explicitly, e.g. by comcat_ui).  True applies the
+                       variance step as versions before 2026-10 did: all residuals
+                       are then divided by their SD, i.e. shrunk by about
+                       sqrt(1 - R^2) of the nuisance fit, which shrinks biological
+                       variance as well (only to reproduce earlier results).
 comcat_crossfit()    : every subject is harmonized with a model that was not fitted
                        on it (k-fold over subjects), optionally fitted on a subset such
                        as the controls and applied to all others.
@@ -184,6 +191,7 @@ def comcat(
     nuisance_model: str = 'pspline',
     nuisance_penalty=None,
     subject=None,
+    single_site_scale: bool = False,
 ):
     """ComCAT harmonization for sites and nuisance parameters.
 
@@ -343,6 +351,12 @@ def comcat(
 
     if verbose and n_batch > 1:
         print(f"[ComCAT] Found {n_batch} different sites")
+    if n_batch == 1 and not mean_only and not single_site_scale:
+        # one site: no site variance to correct; the variance step would only
+        # rescale all residuals by about 1 - R^2 of the nuisance fit
+        if verbose:
+            print("[ComCAT] One site: location correction only")
+        mean_only = True
 
     ind_batch    = slice(0, n_batch)
     ind_nuisance = slice(n_batch, n_batch + n_Z)
