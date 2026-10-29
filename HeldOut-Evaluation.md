@@ -6,8 +6,11 @@
 > harmonization, optionally fitted on controls), and one site is now corrected for
 > location only (`single_site_scale=True` reproduces earlier results). The evaluation
 > on all test samples, with BrainAGE, is in the paper folder
-> (`Harmonization-Oxford/revision/`, see its README). The default `nuisance_model`
-> is still the unpenalized spline, so earlier results can be reproduced.
+> (`Harmonization-Oxford/revision/`, see its README). `'pspline'` is now the default
+> `nuisance_model`. Below, "default" and "current model" mean the unpenalized spline of
+> earlier versions; the scripts in [evaluation/](evaluation/) pin it
+> (`nuisance_model='spline'`, and `single_site_scale=True` for one site), so the numbers
+> below can be reproduced.
 
 **Status:** known issue of the default nuisance model (found 2026-10-28). It bears on reviewer issues B
 (in-sample model flexibility) and C (IQMs carry biology), and on revision tasks

@@ -393,10 +393,10 @@ python comcat_ui.py --help
 Harmonized files are saved into an auto-generated subfolder next to the input files. The folder name encodes the harmonization settings, for example:
 
 ```
-comcat_sites_eb_preserve1_nuisance1_gam6/   # sites + nuisance, empirical Bayes (default)
-comcat_sites_preserve1_nuisance1_gam6/      # the same with eb=False (earlier versions)
+comcat_sites_eb_preserve1_nuisance1_pspline/  # sites + nuisance, default settings
+comcat_sites_preserve1_nuisance1_gam6/        # eb=False, nuisance_model='spline', gam_df=6 (earlier versions)
 combat_sites_eb/
-comcat_nuisance2_gam6/                      # single site: no empirical Bayes
+comcat_meanonly_nuisance2_pspline/            # single site: location only, no empirical Bayes
 ```
 
 Override the folder name with the `subfolder` parameter. For MAT/TXT files, the output file is placed inside the subfolder with the same file name.
@@ -679,6 +679,9 @@ comcat_ui(
     nuisance_scale = False,
     residual_delta = False,
     eb             = True,
+    nuisance_model = 'pspline',
+    nuisance_penalty = None,
+    single_site_scale = False,
 )
 ```
 

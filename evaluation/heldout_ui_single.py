@@ -1,5 +1,6 @@
-"""Single-site samples as comcat_ui runs them (missing batch = one site, so the
-variance step is applied): current model, in-sample vs held-out."""
+"""Single-site samples as comcat_ui runs them with single_site_scale=True, the default
+of earlier versions (missing batch = one site, so the variance step is applied):
+current model, in-sample vs held-out."""
 import os
 import sys
 import numpy as np

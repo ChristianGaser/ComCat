@@ -216,7 +216,8 @@ def comcat_ui(
     verbose       : print progress
     smooth_term_bounds : boundary knots; None infers from data (fine for single-dataset use).
     gam_df        : B-spline basis dimension per nuisance column.
-                    None (default) — auto-selected from sample size: min(10, max(5, n//30)).
+                    None (default) — set by comcat(): 10 for 'pspline', otherwise
+                    auto-selected from sample size: min(10, max(5, n//30)).
     eb            : empirical Bayes estimation of the site effects, as in ComBat
                     (default True; used with at least two sites).  Folder suffix
                     '_eb' after '_sites'; eb=False reproduces earlier results and
@@ -320,13 +321,6 @@ def comcat_ui(
               f"{np.mean(np.abs(off_diag)):.3f}")
 
     # --------------------------------------------------------- harmonize
-    # Resolve gam_df here so subfolder name and log mat are consistent
-    if gam_df is None:
-        gam_df = min(10, max(5, n_subjects // 30))
-
-    if preserve_df == 'same':
-        preserve_df = gam_df
-
     Y_adj, beta_hat, gamma_hat, delta_hat, estimates = comcat(
         Y, batch_coded, nuisance, preserve,
         mean_only=mean_only, verbose=verbose,
@@ -342,6 +336,10 @@ def comcat_ui(
         single_site_scale=single_site_scale,
         return_estimates=True,
     )
+    # gam_df as resolved by comcat(), so that folder name and log mat agree with it
+    gam_df = estimates['gam_df']
+    if preserve_df == 'same':
+        preserve_df = gam_df
     nuisance_scale = estimates['nuisance_scale'] is not None   # False without nuisance
     eb = estimates['eb']                                       # False with a single site
     mean_only = estimates['mean_only']                         # True with a single site
@@ -561,8 +559,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument('--mean-only', action='store_true',
                    help='Adjust mean only (no variance scaling).')
-    p.add_argument('--gam-df', type=int, default=6, metavar='N',
-                   help='B-spline basis dimension per nuisance term (default: 6).')
+    p.add_argument('--gam-df', type=int, default=None, metavar='N',
+                   help='B-spline basis dimension per nuisance term (default: 10 with '
+                        'pspline; 6 with spline, as earlier versions).')
     p.add_argument('--preserve-df', default=None, metavar='N|same',
                    help='B-spline df for continuous preserve covariates '
                         "('same' = gam-df; default: linear).")
@@ -606,7 +605,8 @@ def main(argv=None):
         subfolder=args.subfolder,
         save_estimates=args.save_estimates,
         verbose=not args.quiet,
-        gam_df=args.gam_df,
+        gam_df=(6 if args.gam_df is None and args.nuisance_model == 'spline'
+                else args.gam_df),
         preserve_df=(args.preserve_df if args.preserve_df in (None, 'same')
                      else int(args.preserve_df)),
         nuisance_scale=args.nuisance_scale,

@@ -15,11 +15,15 @@ paths in `data.py` or with environment variables:
 |---|---|
 | `heldout_run.py [samples]` | Location model variants (current, truncated SVD, ridge, IQM subsets, linear, PCs, within-subject), in-sample vs held-out |
 | `heldout_delta.py [samples]` | The same with the variance step (mean only, default δ, `residual_delta`) |
-| `heldout_ui_single.py` | Single-site samples as `comcat_ui` runs them (one coded site, variance step) |
+| `heldout_ui_single.py` | Single-site samples as `comcat_ui` runs them with `single_site_scale=True` (one coded site, variance step; the default of earlier versions) |
 | `transfer.py` | IQM effects estimated within subjects on MR-ART, applied to other samples |
 | `eb_splithalf.py` | Empirical Bayes: split-half error of the site parameters |
 | `eb_traveling.py` | Empirical Bayes: held-out traveling subjects; alternative location targets (`eb_variants.py`) |
 | `eb_impact.py` | Empirical Bayes: in-sample change of the harmonized data by site size |
+
+The scripts that call `comcat()` pin the settings of earlier versions
+(`nuisance_model='spline'`; in `heldout.py` also `single_site_scale=True`), with which
+the documented numbers were computed.
 
 The model variants are not ComCAT options. `heldout.py` and `eb_variants.py` inject them
 by patching comcat internals (`pinv`, the nuisance basis, the EB step), so use these

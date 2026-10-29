@@ -154,7 +154,11 @@
   On held-out data, two things helped. Ridge-penalized or linear IQM terms remove the
   blow-ups. Estimating the IQM effects within subjects (subject terms, location only) was
   the only variant that reduced technical variance without removing biology: MR-ART
-  motion bias −87%, ON-Harmony W/T 0.068 vs 0.074 raw. Not fixed; see
+  motion bias −87%, ON-Harmony W/T 0.068 vs 0.074 raw. The numbers are for the earlier
+  defaults (`nuisance_model='spline'`; one site with `single_site_scale=True`). The
+  changes above target the first and third cause (penalized splines by default,
+  location only with one site), and the second where subjects were scanned repeatedly
+  (`subject` terms); in cross-sectional data the second cause remains. See
   `HeldOut-Evaluation.md`.
 
 ## Unreleased (2026-09-21)

@@ -164,8 +164,8 @@ PRESERVE_FILE = SAMPLES[SAMPLE]["preserve_file"]
 
 # ComCAT options
 MEAN_ONLY    = False   # True → adjust mean only, skip variance scaling
-GAM_DF       = None    # B-spline df per nuisance column;
-                       # None = auto: min(10, max(5, n//30)); set an int to override
+GAM_DF       = None    # B-spline df per nuisance column; None = auto: 10 for
+                       # 'pspline', else min(10, max(5, n//30)); set an int to override
 SAVE_ESTIMATES = False # save additive (gamma) and multiplicative (delta) estimates
 EB           = True    # empirical Bayes estimation of the site effects (as ComBat);
                        # False reproduces earlier results (output folder without '_eb')
