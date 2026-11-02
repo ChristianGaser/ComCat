@@ -141,10 +141,13 @@ def _build_subfolder(
     residual_delta: bool = False,
     eb: bool = False,
     nuisance_model: str = 'pspline',
+    df_consistent: bool = False,
 ) -> str:
     """Folder name encoding the settings.  Without empirical Bayes and the
     optional extensions, the names are those of earlier versions; empirical
-    Bayes adds '_eb' after '_sites', so its results never replace them."""
+    Bayes adds '_eb' after '_sites', so its results never replace them, and the
+    df-consistent site variances (default of comcat() since 2026-11; not with
+    combat_compatible) add '_dfc' after it."""
     if n_sites > 1 and n_nuisance == 0:
         sf = 'combat'
     else:
@@ -153,6 +156,8 @@ def _build_subfolder(
         sf += f'_sites'
         if eb:
             sf += '_eb'
+        if df_consistent:
+            sf += '_dfc'
     if n_preserve > 0:
         sf += f'_preserve{n_preserve}'
         if preserve_df is not None:
@@ -164,8 +169,8 @@ def _build_subfolder(
                else f'_nuisance{n_nuisance}_{nuisance_model}')
         if nuisance_scale:
             sf += '_scale'                 # implies residual site variances
-        elif residual_delta and not mean_only:
-            sf += '_resdelta'
+        elif residual_delta and not mean_only and not df_consistent:
+            sf += '_resdelta'              # implied by df_consistent
     return sf
 
 
@@ -197,6 +202,7 @@ def comcat_ui(
     nuisance_model: str = 'pspline',
     nuisance_penalty=None,
     single_site_scale: bool = False,
+    combat_compatible: bool = False,
 ):
     """
     Run ComCAT on a list of image/data files and save harmonized results.
@@ -233,8 +239,10 @@ def comcat_ui(
                     nuisance effects on the variance is saved as scale_lr / scale_p,
                     with the residual kurtosis used for its studentization
                     (scale_kurtosis).
-    residual_delta: estimate site variances after removing nuisance effects (as in
-                    ComBat).  Folder suffix '_resdelta'.
+    residual_delta: with combat_compatible, estimate site variances after removing
+                    nuisance effects (as in ComBat).  Folder suffix '_resdelta'.
+                    Without combat_compatible, the site variances always come from
+                    the residuals.
     nuisance_model: 'pspline' (default, penalized B-splines, see comcat.py), 'linear'
                     or 'spline' (unpenalized B-splines of earlier versions).  Folder
                     suffix '_pspline' or '_linear'; '_gam<df>' for 'spline'.
@@ -242,6 +250,11 @@ def comcat_ui(
     single_site_scale: with one site (no batch), apply the variance step as earlier
                     versions did.  Default False: one site is corrected for location
                     only, and the folder name gets '_meanonly'.
+    combat_compatible: site variances and their empirical Bayes posteriors as in
+                    ComBat and earlier versions (see comcat.py).  Default False:
+                    df-consistent site variances, which do not shrink the residuals
+                    of small sites; with several sites (and empirical Bayes or the
+                    scale step) the folder name then gets '_dfc'.
     """
     if not files:
         raise ValueError("No input files provided.")
@@ -334,6 +347,7 @@ def comcat_ui(
         nuisance_model=nuisance_model,
         nuisance_penalty=nuisance_penalty,
         single_site_scale=single_site_scale,
+        combat_compatible=combat_compatible,
         return_estimates=True,
     )
     # gam_df as resolved by comcat(), so that folder name and log mat agree with it
@@ -344,7 +358,8 @@ def comcat_ui(
     eb = estimates['eb']                                       # False with a single site
     mean_only = estimates['mean_only']                         # True with a single site
     options = dict(preserve_df=preserve_df, nuisance_scale=nuisance_scale,
-                   residual_delta=residual_delta, eb=eb, nuisance_model=nuisance_model)
+                   residual_delta=residual_delta, eb=eb, nuisance_model=nuisance_model,
+                   df_consistent=estimates.get('site_df') is not None)
 
     # guard against extreme variance changes (factor > 10)
     sd0 = np.std(Y, axis=1, ddof=1) if Y.ndim == 2 else np.std(Y, axis=0, ddof=1)
@@ -515,7 +530,7 @@ def _save_scale_test(estimates, out_dir, filetype, ref_img, verbose):
 
 def _save_log_mat(pth, subfolder, batch, nuisance, preserve, gam_df=6,
                   preserve_df=None, nuisance_scale=False, residual_delta=False,
-                  eb=False, nuisance_model='pspline'):
+                  eb=False, nuisance_model='pspline', df_consistent=False):
     """Save a .mat log file with ComCAT parameters (mirrors MATLAB behaviour)."""
     try:
         from scipy.io import savemat
@@ -529,6 +544,7 @@ def _save_log_mat(pth, subfolder, batch, nuisance, preserve, gam_df=6,
             'residual_delta': int(residual_delta or nuisance_scale),
             'eb':             int(eb),
             'nuisance_model': nuisance_model,
+            'df_consistent':  int(df_consistent),
         }
         savemat(os.path.join(pth, subfolder + '.mat'), {'Comcat': log})
     except ImportError:
@@ -568,7 +584,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument('--nuisance-scale', action='store_true',
                    help='Also remove nuisance-dependent variance.')
     p.add_argument('--residual-delta', action='store_true',
-                   help='Estimate site variances after removing nuisance effects.')
+                   help='With --combat-compatible: estimate site variances after '
+                        'removing nuisance effects (always done otherwise).')
     p.add_argument('--nuisance-model', choices=['pspline', 'linear', 'spline'],
                    default='pspline',
                    help="Nuisance model: penalized B-splines with the smoothing parameter "
@@ -577,6 +594,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument('--single-site-scale', action='store_true',
                    help='With one site, apply the variance step as earlier versions '
                         '(default: location correction only).')
+    p.add_argument('--combat-compatible', action='store_true',
+                   help='Site variances and their empirical Bayes posteriors as in ComBat '
+                        'and earlier versions (default: df-consistent site variances, '
+                        'which do not shrink the residuals of small sites).')
     p.add_argument('--no-eb', action='store_true',
                    help='Disable empirical Bayes estimation of the site effects '
                         '(L/S estimates as in earlier versions).')
@@ -614,6 +635,7 @@ def main(argv=None):
         eb=not args.no_eb,
         nuisance_model=args.nuisance_model,
         single_site_scale=args.single_site_scale,
+        combat_compatible=args.combat_compatible,
     )
 
 

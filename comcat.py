@@ -38,8 +38,10 @@ eb                   : bool (default True)
                        priors estimated from all features, which stabilizes them for
                        small sites.  Used only with at least two sites.  eb=False
                        gives the L/S estimates of earlier versions.  Without
-                       nuisance covariates the result equals ComBat with empirical
-                       Bayes (combat_family.combat_eb).
+                       nuisance covariates and with combat_compatible=True, the
+                       result equals ComBat with empirical Bayes
+                       (combat_family.combat_eb); by default the site variances and
+                       their posteriors are df-consistent (combat_compatible).
 ref_batch            : label of a site to use as reference (its data is left untouched;
                        all other sites are harmonized to its mean level, including its
                        mean nuisance level, and to its variance delta). Default None.
@@ -87,13 +89,45 @@ nuisance_scale       : bool (default False)
                        studentized by the residual kurtosis (estimates['scale_kurtosis'])
                        so that it also holds for skewed or heavy-tailed residuals.
 residual_delta       : bool (default False)
-                       Estimate site variances delta from the residuals after the
-                       additive site AND nuisance effects are removed, as ComBat does.
-                       The default (False, as in the MATLAB implementation) estimates
-                       delta before the nuisance effects are removed; delta then also
-                       contains nuisance-explained variance, which shrinks the residual
-                       variance of the harmonized data by roughly
-                       var(residual) / (var(residual) + var(nuisance effect)).
+                       Only with combat_compatible=True: estimate the site variances
+                       delta from the residuals after the additive site AND nuisance
+                       effects are removed, as ComBat does.  False (as the MATLAB
+                       implementation) estimates delta before the nuisance effects are
+                       removed; delta then also contains nuisance-explained variance,
+                       which shrinks the residual variance of the harmonized data by
+                       roughly var(residual) / (var(residual) + var(nuisance effect)).
+                       Without combat_compatible, the site variances always come from
+                       the residuals (see below).
+
+Site variances (scale step)
+-------------------------------------------------------------------------------
+combat_compatible    : bool (default False)
+                       False: df-consistent site variances.  The site variance of
+                       every site and feature is the ratio of two unbiased residual
+                       variances, the residual sum of squares of the site over its
+                       residual degrees of freedom (n_i minus the summed leverage of
+                       its subjects in the full, penalized model) relative to the
+                       pooled residual variance RSS / (n - trace H).  The empirical
+                       Bayes posterior treats it as a sum of squares with these
+                       degrees of freedom, and its inverse-gamma prior describes the
+                       spread of the true site variances across features (the
+                       sampling variance 2 delta^2 / df is subtracted).  Sites of
+                       equal variance then get site variances of about 1, so the
+                       scale step equalizes the sites without shrinking the residuals.
+                       True: the estimates of ComBat (Johnson et al., 2007) and of
+                       earlier ComCat versions.  ComBat divides the sum of squares of
+                       a site by n_i - 1 but the pooled variance by n, and its
+                       posterior divides by n_i, so that with small sites the site
+                       variances are too large on average and the scale step shrinks
+                       the harmonized residuals even when the sites do not differ in
+                       variance (held out, about 0.85 of the residual variance of a
+                       location-only correction with 3 subjects per site, 0.97 with
+                       10; tests/test_comcat_scale.py).  Without nuisance covariates,
+                       comcat(..., combat_compatible=True) equals ComBat with empirical
+                       Bayes.  Also implied by single_site_scale.  The two settings
+                       differ only with several sites and empirical Bayes or the
+                       scale step; a location-only correction without empirical
+                       Bayes is the same.
 
 Nuisance model, subjects and cross-fitting
 -------------------------------------------------------------------------------
@@ -135,7 +169,8 @@ single_site_scale    : bool (default False)
                        variance step as versions before 2026-10 did: all residuals
                        are then divided by their SD, i.e. shrunk by about
                        sqrt(1 - R^2) of the nuisance fit, which shrinks biological
-                       variance as well (only to reproduce earlier results).
+                       variance as well (only to reproduce earlier results; implies
+                       combat_compatible=True).
 comcat_crossfit()    : every subject is harmonized with a model that was not fitted
                        on it (k-fold over subjects), optionally fitted on a subset such
                        as the controls and applied to all others.
@@ -166,6 +201,8 @@ from numpy.linalg import pinv
 from statsmodels.gam.api import BSplines
 
 _NUISANCE_MODELS = ('spline', 'linear', 'pspline')
+_SITE_DF_MIN = 0.5      # sites with fewer residual df keep a site variance of 1
+_DELTA_PRIOR_CV = 0.01  # least coefficient of variation of the prior of the site variances
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +229,7 @@ def comcat(
     nuisance_penalty=None,
     subject=None,
     single_site_scale: bool = False,
+    combat_compatible: bool = False,
 ):
     """ComCAT harmonization for sites and nuisance parameters.
 
@@ -474,13 +512,18 @@ def comcat(
     gamma_hat_masked = _solve(X_nuisance, None if pen is None else pen[:n_batch + n_Z]) @ Ym.T
 
     # Residuals after removing additive site and nuisance effects; needed when
-    # site variances are estimated from residuals or nuisance variance is removed
+    # site variances are estimated from residuals (always, unless combat_compatible)
+    # or nuisance variance is removed
     scale_model = None
     if nuisance_scale and n_Z == 0:
         if verbose:
             print("[ComCAT] nuisance_scale ignored: no nuisance covariates")
         nuisance_scale = False
-    if nuisance_scale or residual_delta:
+    if single_site_scale:
+        combat_compatible = True          # the variance step of earlier versions
+    # df-consistent site variances: with several sites, unless combat_compatible
+    consistent = (not combat_compatible) and n_batch > 1 and (eb or not mean_only)
+    if nuisance_scale or residual_delta or consistent:
         resid_std = Ym - (X_nuisance @ gamma_hat_masked).T   # (n_valid, n_subjects)
         if nuisance_scale:
             if verbose:
@@ -498,11 +541,33 @@ def comcat(
         resid_std = None
         var_source = Ym
 
+    # Site variances.  ComBat (combat_compatible) divides the sum of squares of a site
+    # by n_i - 1 but the pooled variance by n, so that with small sites the site
+    # variances are too large on average and the scale step shrinks the residuals.
+    # Here every site variance is the ratio of two unbiased residual variances: the
+    # residual sum of squares of the site over its residual degrees of freedom
+    # (n_i minus the leverage of its subjects in the full, penalized model), relative
+    # to the pooled residual variance RSS / (n - trace H).  Sites of equal variance
+    # then get site variances of about 1, and the scale step only equalizes them.
+    site_df, var_scale, site_var = None, 1.0, None
+    if consistent:
+        lev = np.einsum('ij,ji->i', XZ, _solve(XZ, pen))    # leverages (hat diagonal)
+        site_df = np.array([len(b) - lev[b].sum() for b in batches])
+        var_scale = (n_subjects - lev.sum()) / n_subjects   # std_pooled^2 = RSS / n
+        site_var = np.ones((n_batch, Ym.shape[0]))
+        for i, b in enumerate(batches):
+            if site_df[i] >= _SITE_DF_MIN:
+                site_var[i] = np.sum(resid_std[:, b] ** 2, axis=1) / site_df[i] * var_scale
+        if verbose:
+            print(f"[ComCAT] Site variances with residual df {np.round(site_df, 1).tolist()}")
+
     delta_hat_masked = np.zeros((n_batch + n_Z, Ym.shape[0]), dtype=np.float64)
     for i in range(n_batch):
         idx = batches[i]
         if mean_only:
             delta_hat_masked[i, :] = 1.0
+        elif site_var is not None:
+            delta_hat_masked[i, :] = site_var[i]
         else:
             delta_hat_masked[i, :] = np.var(var_source[:, idx], axis=1, ddof=1)
 
@@ -518,10 +583,12 @@ def comcat(
         if verbose:
             print("[ComCAT] Empirical Bayes estimation of site effects")
         # mean_only still needs the site variances for the posterior of gamma
-        site_var = (np.vstack([np.var(var_source[:, idx], axis=1, ddof=1) for idx in batches])
-                    if mean_only else delta_hat_masked[:n_batch])
+        if site_var is None:
+            site_var = (np.vstack([np.var(var_source[:, idx], axis=1, ddof=1)
+                                   for idx in batches])
+                        if mean_only else delta_hat_masked[:n_batch])
         gamma_star_masked, delta_star_sites, eb_priors = _eb_site_effects(
-            gamma_hat_masked, site_var, n_batches, ref_level
+            gamma_hat_masked, site_var, n_batches, ref_level, site_df, var_scale
         )
         delta_star_masked = delta_hat_masked.copy()
         if not mean_only:
@@ -617,7 +684,9 @@ def comcat(
         'spline_constructors': spline_constructors,
         # optional extensions
         'preserve_splines':    preserve_splines,
-        'residual_delta':      bool(residual_delta or nuisance_scale),
+        'residual_delta':      bool(residual_delta or nuisance_scale or consistent),
+        'combat_compatible':   bool(combat_compatible),
+        'site_df':             site_df,
         'nuisance_scale':      scale_model,
         # empirical Bayes: applied site effects (None without eb) and priors
         'eb':                  use_eb,
@@ -1116,7 +1185,8 @@ _EB_CONV = 1e-4
 _EB_MAX_ITER = 1000
 
 
-def _eb_site_effects(gamma_masked, site_var, n_batches, ref_level=None):
+def _eb_site_effects(gamma_masked, site_var, n_batches, ref_level=None, site_df=None,
+                     var_scale=1.0):
     """Empirical Bayes estimates of the site effects (eb option).
 
     The site rows of gamma_masked are the site coefficients at the zero of
@@ -1133,6 +1203,9 @@ def _eb_site_effects(gamma_masked, site_var, n_batches, ref_level=None):
     site_var     : (n_batch, n_valid) site variances delta_hat
     n_batches    : (n_batch,) subjects per site
     ref_level    : index of the reference site, or None
+    site_df, var_scale : residual degrees of freedom of the sites and the ratio
+                   of the pooled variance of the standardization (RSS / n) to the
+                   unbiased one, for df-consistent site variances (None: ComBat)
 
     Returns gamma_star (gamma_masked with the site rows replaced),
     delta_star (n_batch, n_valid) and the priors (see _eb_estimates).
@@ -1143,15 +1216,16 @@ def _eb_site_effects(gamma_masked, site_var, n_batches, ref_level=None):
         center = (n_batches / n_batches.sum()) @ gamma_site
     else:
         center = gamma_site[ref_level]
-    skip = [i for i in range(n_batch) if i == ref_level or n_batches[i] < 2]
+    skip = [i for i in range(n_batch) if i == ref_level or n_batches[i] < 2
+            or (site_df is not None and site_df[i] < _SITE_DF_MIN)]
     g_star, delta_star, priors = _eb_estimates(gamma_site - center, site_var,
-                                               n_batches, skip)
+                                               n_batches, skip, site_df, var_scale)
     gamma_star = gamma_masked.copy()
     gamma_star[:n_batch] = g_star + center
     return gamma_star, delta_star, priors
 
 
-def _eb_estimates(gamma_hat, delta_hat, n_batches, skip=()):
+def _eb_estimates(gamma_hat, delta_hat, n_batches, skip=(), df=None, var_scale=1.0):
     """Parametric empirical Bayes of Johnson et al. (2007), per site.
 
     Priors gamma_ig ~ N(gamma_bar_i, t2_i) and delta_ig ~ InvGamma(a_i, b_i)
@@ -1164,6 +1238,19 @@ def _eb_estimates(gamma_hat, delta_hat, n_batches, skip=()):
 
     gamma_hat, delta_hat : (n_batch, n_valid);  n_batches : (n_batch,)
     skip : sites that keep gamma_hat and delta_hat
+    df   : None (ComBat) or the residual degrees of freedom of every site, with
+           delta_hat the df-consistent site variances (ratios to the unbiased pooled
+           variance) and var_scale the ratio of the pooled variance of the
+           standardization to the unbiased one.  Then the posterior of every site
+           variance is that of a residual sum of squares df_i * delta_hat with df_i
+           degrees of freedom under the inverse-gamma prior,
+           (b + df_i delta_hat / 2) / (a + df_i / 2 - 1), which is about 1 for sites of
+           equal variance; the prior of the site variances is estimated from their
+           variance across features net of the sampling variance 2 delta^2 / df_i;
+           and the posterior of the location uses the sampling variance
+           delta / var_scale of the standardized data.  ComBat instead counts n_i
+           degrees of freedom for a sum of squares with n_i - 1, adds the shrinkage of
+           the location to it, and includes the sampling variance in the prior.
 
     Returns gamma_star, delta_star and a dict of per-site hyperparameters
     'gamma_bar', 't2', 'a', 'b' (NaN for skipped sites).
@@ -1182,6 +1269,27 @@ def _eb_estimates(gamma_hat, delta_hat, n_batches, skip=()):
         with np.errstate(divide='ignore', invalid='ignore'):
             a = (2 * d_var + d_bar ** 2) / d_var
             b = (d_bar * d_var + d_bar ** 3) / d_var
+        if df is not None:
+            # df-consistent posteriors (closed form; the location does not enter the
+            # site variance).  The site variances of the features scatter around their
+            # true values with the sampling variance 2 delta^2 / df_i, so the prior,
+            # which describes the true values, gets the variance across features net
+            # of it (method of moments of the hierarchical model); without true
+            # differences between the features, the posterior is the site's mean.
+            nu = df[i]
+            v = max((d_var - 2 * d_bar ** 2 / nu) / (1 + 2 / nu), (_DELTA_PRIOR_CV * d_bar) ** 2)
+            with np.errstate(divide='ignore', invalid='ignore'):
+                a = (2 * v + d_bar ** 2) / v
+                b = (d_bar * v + d_bar ** 3) / v
+                d_new = (b + 0.5 * nu * d_hat) / (a + 0.5 * nu - 1)
+                noise = d_new / var_scale
+                g_new = (n_b * t2 * g_hat + noise * g_bar) / (n_b * t2 + noise)
+            ok = np.isfinite(g_new) & np.isfinite(d_new) & (d_new > 0)
+            gamma_star[i] = np.where(ok, g_new, g_hat)
+            delta_star[i] = np.where(ok, d_new, d_hat)
+            for key, val in zip(('gamma_bar', 't2', 'a', 'b'), (g_bar, t2, a, b)):
+                priors[key][i] = val
+            continue
         ss = (n_b - 1) * d_hat
 
         g_old, d_old = g_hat, d_hat

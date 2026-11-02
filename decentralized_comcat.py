@@ -24,6 +24,10 @@ Design notes
 * Empirical Bayes (eb=True, the default of comcat()) runs on the aggregator: it
   needs only the site effects gamma, the per-batch variances and the site sizes,
   which the protocol already exchanges.
+* The site variances are those of ComBat, i.e. this reproduces
+  comcat(..., combat_compatible=True).  The df-consistent site variances of the
+  default would also need the leverages of every site's subjects, which a site can
+  compute from the aggregated Gram matrix; not implemented.
 
 See tests/DECENTRALIZED-GAM-DESIGN.md for the full design.
 """
@@ -361,7 +365,8 @@ def main():
     for eb in (True, False):
         # centralized reference (GAM on age — always applied)
         Y_central, *_ = comcat(Y, batch, nuisance_model='spline', nuisance=age, preserve=score,
-                               mean_only=False, verbose=False, eb=eb)
+                               mean_only=False, verbose=False, eb=eb,
+                               combat_compatible=True)
 
         out, est = decentralized_harmonize(site_Y, site_batch_idx, site_nuis,
                                            site_pres, batch_levels, eb=eb)

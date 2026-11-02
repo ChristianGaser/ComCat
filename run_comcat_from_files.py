@@ -177,12 +177,15 @@ PRESERVE_DF    = None  # B-spline df for continuous preserve covariates:
 NUISANCE_SCALE = False # also remove nuisance-dependent variance (heteroscedasticity);
                        # with SAVE_ESTIMATES the per-feature test is saved
                        # (scale_lr/scale_p/scale_kurtosis)
-RESIDUAL_DELTA = False # estimate site variances after removing nuisance effects
-                       # (as ComBat); implied by NUISANCE_SCALE
+RESIDUAL_DELTA = False # with COMBAT_COMPATIBLE: estimate site variances after removing
+                       # nuisance effects (as ComBat); always done otherwise
 NUISANCE_MODEL = 'pspline' # 'pspline' (penalized B-splines, smoothing by REML),
                        # 'linear', or 'spline' (unpenalized B-splines, earlier versions)
 SINGLE_SITE_SCALE = False  # one site: True applies the variance step of earlier
                        # versions; False corrects the location only
+COMBAT_COMPATIBLE = False  # True: site variances and their EB posteriors as ComBat and
+                       # earlier versions; False: df-consistent site variances, which
+                       # do not shrink the residuals of small sites (folder '_dfc')
 
 # ---------------------------------------------------------------------------
 # Load covariates from text files
@@ -234,6 +237,7 @@ for mat_file in MAT_FILES:
         residual_delta = RESIDUAL_DELTA,
         nuisance_model = NUISANCE_MODEL,
         single_site_scale = SINGLE_SITE_SCALE,
+        combat_compatible = COMBAT_COMPATIBLE,
         eb             = EB,
     )
 
