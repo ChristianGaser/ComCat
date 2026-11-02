@@ -53,7 +53,7 @@ ComCAT implements a harmonization model that:
 2. **Regresses out nuisance covariates** (e.g., image quality metrics, total intracranial volume) using penalized B-splines (smoothness by REML).
 3. **Preserves biological covariates of interest** (e.g., age, group) so they are not inadvertently removed.
 
-When only batch correction is requested, ComCAT is ComBat with empirical Bayes: it agrees with `combat_family.combat_eb()`, the port of the R package ComBatFamily, to ~1e-13. With nuisance covariates it extends ComBat with flexible nuisance modelling, and the empirical Bayes step is applied to the site effects.
+When only batch correction is requested, ComCAT with `combat_compatible=True` is ComBat with empirical Bayes: it agrees with `combat_family.combat_eb()`, the port of the R package ComBatFamily, to ~1e-13. By default, the site variances are df-consistent, so that the scale step does not shrink the residuals of small sites (see `combat_compatible` below). With nuisance covariates it extends ComBat with flexible nuisance modelling, and the empirical Bayes step is applied to the site effects.
 
 If you are interested in ComCat's theoretical background, you can read about it [here](ComCat-Theory.md).
 
@@ -210,8 +210,9 @@ and the tests are in `tests/test_comcat_eb.py`.
   model. They are therefore shrunk as differences to the size-weighted mean of the
   sites (or to `ref_batch`), which are ComBat's site effects. A reference site keeps its
   estimates, and sites with one subject are left out.
-- **Without nuisance covariates** the result equals ComBat with EB
-  (`combat_family.combat_eb()`) to ~1e-13.
+- **Without nuisance covariates** and with `combat_compatible=True`, the result equals
+  ComBat with EB (`combat_family.combat_eb()`) to ~1e-13. By default, the site variances
+  and their posteriors are df-consistent (see `combat_compatible`).
 - **Estimates.** `comcat()` returns the applied (EB) `gamma_hat` / `delta_hat`. With
   `return_estimates=True`, the dict holds the L/S estimates (`gamma_hat_masked`,
   `delta_hat_masked`), the EB estimates (`gamma_star_masked`, `delta_star_masked`)
@@ -243,7 +244,7 @@ location shrinkage has almost no effect. The variance shrinkage still applies.
 ### Optional model extensions
 
 Three options extend the model. All are **off by default**: without them and with
-`eb=False`, `comcat()` and `comcat_ui()` give bit-identical results to earlier versions.
+`eb=False` and `combat_compatible=True`, `comcat()` and `comcat_ui()` give bit-identical results to earlier versions.
 The maths is in [ComCat-Theory.md](ComCat-Theory.md#optional-extensions), and the
 behaviour is tested in `tests/test_comcat_options.py`.
 
@@ -251,7 +252,7 @@ behaviour is tested in `tests/test_comcat_options.py`.
 |---|---|---|---|
 | `preserve_df` | `None` (linear) | B-spline expansion of continuous preserve covariates (int, or `'same'` = `gam_df`). Columns with fewer than `preserve_df` + 2 distinct values (group, sex) stay linear. | `_preserve<n>_gam<df>` |
 | `preserve_bounds` | `None` | Boundary knots for the preserve splines, like `smooth_term_bounds` but per preserve column. Required by `comcat_from_training()` when new data exceed the training range. | — |
-| `residual_delta` | `False` | Estimate site variances δ after removing the additive site **and** nuisance effects, as ComBat does. | `_resdelta` |
+| `residual_delta` | `False` | With `combat_compatible=True`: estimate site variances δ after removing the additive site **and** nuisance effects, as ComBat does (always done otherwise). | `_resdelta` |
 | `nuisance_scale` | `False` | Also remove nuisance-dependent variance (heteroscedasticity) with a log-linear variance model per feature; implies `residual_delta`. | `_scale` |
 
 **`preserve_df` — preserve non-linear effects of interest.** Nuisance columns are
@@ -273,6 +274,28 @@ alone leaves 23% of the scan-to-scan variance, and the δ step reduces this furt
 depend on individual variance (e.g. BrainAGE MAE) with `residual_delta=True`. Only
 `mean_only=True` avoids the effect, and `comcat_ui()` treats a missing `batch` as one
 site, so single-site runs are affected too.
+
+**`combat_compatible` — site variances as in ComBat.** By default, the site variances
+δ (scale step) are df-consistent: for every site and feature, the residual sum of
+squares of the site over its residual degrees of freedom (n_i minus the summed leverage
+of its subjects in the full, penalized model), relative to the pooled residual variance
+RSS / (n − trace H). The empirical Bayes posterior treats δ̂ as a sum of squares with
+these degrees of freedom, and its inverse-gamma prior describes the spread of the true
+site variances across features (net of the sampling variance 2δ²/df). Sites of equal
+variance then get δ ≈ 1, and the scale step equalizes the sites without shrinking the
+residuals. ComBat (`combat_compatible=True`, CLI `--combat-compatible`, also the
+behaviour of earlier ComCAT versions) divides the sum of squares of a site by n_i − 1
+but the pooled variance by n, and its posterior divides by n_i, so with small sites the
+site variances are too large on average and the scale step shrinks the residuals even
+when the sites do not differ in variance: held out, to about 0.85 of the residual
+variance of a location-only correction with 3 subjects per site, 0.92 with 5, 0.97 with
+10 and 1.00 with 40 (`tests/test_comcat_scale.py`; the default stays at 1.0). This
+lowers, for example, a BrainAGE MAE without any gain in information. Without nuisance
+covariates, `combat_compatible=True` reproduces ComBat with empirical Bayes
+(`combat_family.combat_eb`); a location-only correction without empirical Bayes is the
+same in both settings. With `combat_compatible=False`, the site variances always come
+from the residuals (`residual_delta` is implied), and `comcat_ui()` adds `_dfc` to the
+folder name when they are used (several sites, with empirical Bayes or the scale step).
 
 **`nuisance_scale` — remove quality-dependent noise.** The residuals of every feature
 are modelled as `log sd = site + IQMs + preserve` (raw columns, z-scored, linear) by
@@ -546,7 +569,8 @@ Results are stored as arrays of shape `(n_a2, n_a4, n_nuisance, n_methods)` for 
 |---|---|---|
 | `tests/test_comcat_py.py` | MATLAB reference files | Python port vs `comcat.m` (below) |
 | `tests/test_comcat_options.py` | — | Optional extensions on simulated data with known effects; defaults unchanged; `comcat_from_training()` reproduces the in-sample result |
-| `tests/test_comcat_eb.py` | — | Empirical Bayes: equals ComBat (`combat_eb`) without nuisance; site effects and harmonized data closer to the truth than L/S in a simulation with small sites and IQMs; `ref_batch`; `comcat_from_training()` |
+| `tests/test_comcat_scale.py` | — | Scale step: df-consistent site variances about 1 at every site size, residual variance kept in-sample and held out (ComBat-compatible: shrunk), unequal sites equalized |
+| `tests/test_comcat_eb.py` | — | Empirical Bayes: equals ComBat (`combat_eb`) without nuisance and with `combat_compatible=True`; site effects and harmonized data closer to the truth than L/S in a simulation with small sites and IQMs; `ref_batch`; `comcat_from_training()` |
 | `tests/test_combat_family.py` | R + ComBatFamily (optional) | CovBat / ComBatLS / ComBat-EB properties and agreement with the R package |
 
 ### `test_comcat_py.py`
