@@ -4,8 +4,9 @@ test_comcat_eb.py
 Tests for the empirical Bayes estimation of the site effects in comcat.py
 (eb=True, the default).  No MATLAB reference files are needed.
 
-1. Without nuisance covariates, ComCAT equals ComBat: combat_family.combat_eb(),
-   the port of the R package ComBatFamily, with and without EB and mean_only.
+1. Without nuisance covariates and with combat_compatible=True, ComCAT equals ComBat:
+   combat_family.combat_eb(), the port of the R package ComBatFamily, with and without
+   EB and mean_only.
 2. EB is not used with a single site, and eb=False stores no EB estimates.
 3. Simulation with known site effects drawn from site-specific priors, small
    sites and an IQM whose distribution differs between sites and whose effect on
@@ -89,16 +90,22 @@ def site_errors(est, sizes, gamma, sd):
 # ---------------------------------------------------------------------------
 
 def test_reduces_to_combat():
-    print("Without nuisance, ComCAT equals ComBat (combat_family.combat_eb)")
+    print("Without nuisance and combat_compatible, ComCAT equals ComBat (combat_eb)")
     Y, batch, _, age, *_ = simulate(seed=1, p=300)
     sex = np.random.default_rng(1).integers(0, 2, len(batch)).astype(float)
     X = np.column_stack([age, sex])
     for mean_only in (False, True):
         for eb in (True, False):
-            a = comcat(Y, batch, None, X, eb=eb, mean_only=mean_only)[0]
+            a = comcat(Y, batch, None, X, eb=eb, mean_only=mean_only,
+                       combat_compatible=True)[0]
             b = combat_eb(Y, batch, X, eb=eb, mean_only=mean_only)[0]
             err = np.max(np.abs(a - b))
             check(f"eb={eb}, mean_only={mean_only}", err < 1e-10, f"max_abs={err:.1e}")
+    # the default differs from ComBat only in the site variances, which neither
+    # location-only correction without EB uses
+    a = comcat(Y, batch, None, X, eb=False, mean_only=True)[0]
+    b = combat_eb(Y, batch, X, eb=False, mean_only=True)[0]
+    check("default, eb=False, mean_only=True", np.max(np.abs(a - b)) < 1e-10)
 
 
 def test_single_site_and_eb_false():

@@ -139,12 +139,17 @@ def test_residual_delta_keeps_residual_variance():
                     preserve_df='same', **opts)[0]
         return np.median(residuals_around_age(Yh, age).var(1))
 
-    v_old, v_new = noise_var(), noise_var(residual_delta=True)
+    v_old = noise_var(combat_compatible=True)
+    v_rd = noise_var(combat_compatible=True, residual_delta=True)
+    v_new = noise_var()
     # in-sample fit removes ~k/n of the noise variance (k ~ 15 parameters)
-    check("residual_delta: residual variance ~ true noise (1)", 0.9 < v_new < 1.02,
-          f"{v_new:.3f}")
-    # default: shrunk by ~ 1 / (1 + var(nuisance effect) / var(noise)) ~ 1/5
-    check("default: residual variance shrunk", v_old < 0.3, f"{v_old:.3f}")
+    check("combat_compatible, residual_delta: residual variance ~ true noise (1)",
+          0.9 < v_rd < 1.02, f"{v_rd:.3f}")
+    check("default (site variances from residuals): ~ true noise (1)",
+          0.9 < v_new < 1.02, f"{v_new:.3f}")
+    # earlier default: site variances before the nuisance effects are removed, shrunk
+    # by ~ 1 / (1 + var(nuisance effect) / var(noise)) ~ 1/5
+    check("combat_compatible: residual variance shrunk", v_old < 0.3, f"{v_old:.3f}")
 
 
 def test_nuisance_scale_removes_heteroscedasticity():

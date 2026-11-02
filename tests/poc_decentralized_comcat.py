@@ -7,7 +7,7 @@ Scenario (deliberately kept simple, NO GAM):
   - one global `preserve` covariate (e.g. age) -> makes the design non-block-
     diagonal so beta genuinely requires cross-site aggregation
   - no nuisance (preserve only), mean_only=False, ref_batch=None
-  - no empirical Bayes: compared with comcat(..., eb=False);
+  - no empirical Bayes: compared with comcat(..., eb=False, combat_compatible=True);
     decentralized_comcat.py adds the EB step on the aggregator
 
 Protocol (mirrors Bostami et al. 2022 pseudo-algorithm):
@@ -212,6 +212,7 @@ def main():
     Y_central, *_ = comcat(
         Y, batch, nuisance=None, preserve=age,
         mean_only=False, verbose=False, eb=False,
+        combat_compatible=True,            # the site variances of the protocol
     )
 
     # ---- decentralized: split by site, never pool raw Y -------------------

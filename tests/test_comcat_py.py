@@ -15,7 +15,8 @@ Each test case loads the MATLAB-generated inputs, runs comcat.py on the
 same inputs, and compares the harmonized output against the MATLAB result.
 
 comcat.m has no empirical Bayes step, so the multi-site cases are run with
-eb=False.
+eb=False, and it estimates the site variances as ComBat does, so they are run with
+combat_compatible=True.
 
 Tolerances
 ----------
@@ -88,6 +89,7 @@ def test_case1():
     # MATLAB batch is 1-based; comcat.py recodes internally, so pass as-is
     Yh_py, bh_py, gh_py, dh_py = comcat(
         Y, batch, Z, X, mean_only=False, verbose=False, eb=False,
+        combat_compatible=True,          # site variances as the MATLAB version
     )
 
     check_close("Y_harmonized", Yh_py, d['Yh1'])
@@ -140,6 +142,7 @@ def test_case4():
     Yh_py, bh_py, gh_py, dh_py = comcat(
         Y, batch, Z[:, np.newaxis], X[:, np.newaxis],
         mean_only=False, verbose=False, eb=False,
+        combat_compatible=True,          # site variances as the MATLAB version
     )
 
     check_close("Y_harmonized", Yh_py, d['Yh4'])
@@ -161,6 +164,7 @@ def test_case5():
     Yh_py, bh_py, gh_py, dh_py = comcat(
         Y, batch, Z, X[:, np.newaxis],
         mean_only=False, verbose=False, eb=False,
+        combat_compatible=True,          # site variances as the MATLAB version
     )
 
     check_close("Y_harmonized", Yh_py, d['Yh5'])
