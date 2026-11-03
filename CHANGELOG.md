@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased (2026-11-02)
+
+### Changed — df-consistent site variances (default)
+
+- The scale step of ComBat estimates every site variance with n_i − 1 degrees of
+  freedom but the pooled variance with N, and its EB posterior divides by n_i. With
+  small sites the site variances are therefore too large on average, and the scale step
+  shrinks the harmonized residuals, also of new subjects, although the sites do not
+  differ in variance (held out, to 0.85 of a location-only correction with 3 subjects
+  per site in the fit, 0.92 with 5, 0.97 with 10, 1.00 with 40).
+- By default, `comcat()` now uses df-consistent site variances: the residual sum of
+  squares of a site over its residual df (n_i minus the summed leverage of its subjects
+  in the full penalized model), relative to RSS / (N − tr H), always from the residuals
+  after the nuisance effects. The EB posterior treats them as sums of squares with these
+  df, and the prior is estimated net of their sampling variance. Sites of equal variance
+  get δ² ≈ 1; sites with fewer than 0.5 residual df keep 1. The location posterior uses
+  the residual variances too, so location-only corrections with EB also change.
+- `combat_compatible=True` (`comcat_ui`, CLI `--combat-compatible`,
+  `run_comcat_from_files.py` `COMBAT_COMPATIBLE`) gives the earlier estimates
+  bit-identically and, without nuisance covariates, ComBat with EB. `residual_delta`
+  now matters only together with it (otherwise the site variances always come from the
+  residuals). `comcat_ui` folders of the new default get `_dfc`.
+- `decentralized_comcat.py` keeps ComBat's site variances (`combat_compatible=True`);
+  the df-consistent ones would need every site's leverages.
+- Tests: `tests/test_comcat_scale.py`; the EB, option and MATLAB comparison tests pin
+  `combat_compatible=True` where they compare with ComBat or earlier results.
+
 ## Unreleased (2026-10-28)
 
 ### Added — nuisance models, subject terms, cross-fitting (opt-in)
