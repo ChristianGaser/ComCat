@@ -82,12 +82,19 @@ def residuals_around_age(Yh, age):
 
 
 def test_defaults_unchanged():
-    print("Defaults: new options off give the same result as before")
-    Y, batch, z, age, *_ = simulate()
-    ref = comcat(Y, batch, z, age, gam_df=6)
-    new = comcat(Y, batch, z, age, gam_df=6, preserve_df=None,
-                 nuisance_scale=False, residual_delta=False)
-    check("identical output", all(np.array_equal(a, b) for a, b in zip(ref, new)))
+    print("Defaults: the documented defaults of the options")
+    import inspect
+    from comcat import comcat_crossfit
+    defaults = {k: v.default for k, v in inspect.signature(comcat).parameters.items()}
+    documented = dict(mean_only=False, preserve_df=None, nuisance_scale=False,
+                      residual_delta=False, eb=True, nuisance_model='pspline',
+                      subject=None, single_site_scale=False, combat_compatible=False,
+                      gam_df=None)
+    wrong = {k: defaults[k] for k, v in documented.items() if defaults[k] != v}
+    check("defaults as documented (README)", not wrong, str(wrong))
+    crossfit = inspect.signature(comcat_crossfit).parameters
+    check("comcat_crossfit: subject_terms=False, folds=5",
+          crossfit['subject_terms'].default is False and crossfit['folds'].default == 5)
 
 
 def test_preserve_df_keeps_nonlinear_age_effect():

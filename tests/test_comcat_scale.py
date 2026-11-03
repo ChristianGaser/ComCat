@@ -160,6 +160,35 @@ def test_estimates_and_from_training():
           np.round(est['site_df'], 2).tolist())
 
 
+def test_single_subject_site():
+    print("A site with one subject gets no site correction (its effect is not identified)")
+    Y, site, Z, age, *_ = simulate([1, 10, 20], seed=5)
+    one = site == np.unique(site)[0]
+    for cc in (False, True):
+        for mean_only in (False, True):
+            tag = f"combat_compatible={cc}, mean_only={mean_only}"
+            opts = dict(combat_compatible=cc, mean_only=mean_only)
+            Yh, *_, est = comcat(Y, site, Z, age, return_estimates=True, **opts)
+            d = est['delta_star_masked'][:3]
+            check(f"{tag}: finite site variances, 1 for the single subject",
+                  np.all(np.isfinite(d)) and np.allclose(d[0], 1))
+            # in-sample, the subject keeps its deviations (before: replaced by its
+            # predicted values, as its residual was removed as the site effect)
+            Y1 = Y.copy()
+            Y1[:, one] += 1.0
+            gain = np.mean(comcat(Y1, site, Z, age, **opts)[0][:, one] - Yh[:, one])
+            check(f"{tag}: the subject keeps its deviations", abs(gain - 1) < 0.1,
+                  f"+1 on its data -> {gain:+.3f}")
+            # new scans of that site: as at an unseen site, i.e. not shifted by the
+            # single subject's deviations (and finite: before, ComBat's variance was NaN)
+            Yn = Y[:, one] + np.linspace(-1, 1, Y.shape[0])[:, None]
+            Ha = comcat_from_training(Yn, site[one], Z[one], age[one], estimates=est)
+            Hu = comcat_from_training(Yn, np.array([99]), Z[one], age[one], estimates=est,
+                                      unseen_batch='mean')
+            check(f"{tag}: new scans as at an unseen site", np.allclose(Ha, Hu),
+                  f"max_abs={np.max(np.abs(Ha - Hu)):.1e}")
+
+
 if __name__ == '__main__':
     tests = [v for k, v in list(globals().items()) if k.startswith('test_')]
     for t in tests:

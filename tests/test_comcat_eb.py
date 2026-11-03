@@ -82,7 +82,9 @@ def site_errors(est, sizes, gamma, sd):
     loc = g[:K] * est['std_pooled']
     loc = loc - w @ loc
     loc_err = np.sqrt(np.mean((loc - (gamma - w @ gamma)) ** 2, axis=1))
-    var = d[:K] * est['std_pooled'] ** 2
+    # df-consistent site variances are relative to the unbiased pooled variance,
+    # std_pooled^2 / var_scale (var_scale 1 with combat_compatible)
+    var = d[:K] * est['std_pooled'] ** 2 / est.get('var_scale', 1.0)
     var_err = np.sqrt(np.mean((np.log(var) - np.log(sd ** 2)) ** 2, axis=1))
     return loc_err, var_err
 
