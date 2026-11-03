@@ -37,7 +37,8 @@ eb                   : bool (default True)
                        (delta) site parameters of every feature are shrunk towards
                        priors estimated from all features, which stabilizes them for
                        small sites.  Used only with at least two sites.  eb=False
-                       gives the L/S estimates of earlier versions.  Without
+                       gives the L/S estimates (earlier versions also need
+                       combat_compatible=True and nuisance_model='spline').  Without
                        nuisance covariates and with combat_compatible=True, the
                        result equals ComBat with empirical Bayes
                        (combat_family.combat_eb); by default the site variances and
@@ -65,8 +66,9 @@ gam_df               : int, B-spline basis dimension per nuisance column (defaul
                        unpenalized 'spline' min(10, max(5, n//30)), where higher values
                        capture finer nonlinearities but overfit).
 
-Optional model extensions (all off by default; with eb=False, the defaults
-reproduce earlier results)
+Optional model extensions (all off by default; with eb=False,
+combat_compatible=True and nuisance_model='spline', the defaults reproduce earlier
+results)
 -------------------------------------------------------------------------------
 preserve_df          : None (default) | int | 'same'
                        B-spline expansion of continuous preserve covariates, so that
@@ -287,6 +289,7 @@ def comcat(
 
     nuisance = _to_col_matrix(nuisance, n_subjects)   # (n_subjects, n_Z)
     preserve = _to_col_matrix(preserve, n_subjects)   # (n_subjects, n_X)
+    _check_finite(nuisance=nuisance, preserve=preserve)
 
     n_Z = nuisance.shape[1]
 
@@ -303,6 +306,15 @@ def comcat(
             print(f"[ComCAT] {subject_cols.shape[1] + 1} subjects: effects estimated "
                   "within subjects, mean only")
         mean_only = True
+        n_groups = _site_groups(batch, subject)
+        if n_groups > 1:
+            warnings.warn(
+                f"With subject terms, the site effects are estimated within subjects, but "
+                f"the sites form {n_groups} groups without a subject scanned in two of "
+                "them (e.g. every subject scanned at one site): the differences between "
+                "these groups are not identified and stay in the data.  Use "
+                "comcat_crossfit(..., subject_terms=False) or no subject terms.",
+                UserWarning, stacklevel=2)
 
     # Resolve gam_df from sample size when not set explicitly:
     #   min(10, max(5, n_subjects // 30)); 10 for penalized splines
@@ -568,7 +580,9 @@ def comcat(
     delta_hat_masked = np.zeros((n_batch + n_Z, Ym.shape[0]), dtype=np.float64)
     for i in range(n_batch):
         idx = batches[i]
-        if mean_only:
+        if mean_only or (site_var is None and len(idx) < 2):
+            # ComBat's variance of a single subject is undefined (NaN, which the
+            # adjustment below would turn into 0, i.e. the subject's predicted values)
             delta_hat_masked[i, :] = 1.0
         elif site_var is not None:
             delta_hat_masked[i, :] = site_var[i]
@@ -589,6 +603,7 @@ def comcat(
         # mean_only still needs the site variances for the posterior of gamma
         if site_var is None:
             site_var = (np.vstack([np.var(var_source[:, idx], axis=1, ddof=1)
+                                   if len(idx) > 1 else np.ones(Ym.shape[0])
                                    for idx in batches])
                         if mean_only else delta_hat_masked[:n_batch])
         gamma_star_masked, delta_star_sites, eb_priors = _eb_site_effects(
@@ -599,6 +614,23 @@ def comcat(
             delta_star_masked[:n_batch] = delta_star_sites
     else:
         gamma_star_masked, delta_star_masked, eb_priors = gamma_hat_masked, delta_hat_masked, None
+
+    # A site with a single subject: its site effect cannot be separated from that
+    # subject's deviation, and removing it would replace the subject by its predicted
+    # values and shift every other scan of the site by its anatomy.  Such sites are
+    # corrected like unseen sites instead: the size-weighted mean level of the other
+    # sites and the pooled variance.
+    single = [i for i in range(n_batch) if n_batches[i] < 2 and i != ref_level]
+    if single and n_batch > 1:
+        others = [i for i in range(n_batch) if i not in single] or list(range(n_batch))
+        w = np.asarray(n_batches, dtype=np.float64)[others]
+        level = (w / w.sum()) @ gamma_star_masked[others]
+        gamma_star_masked = gamma_star_masked.copy()
+        delta_star_masked = delta_star_masked.copy()
+        gamma_star_masked[single] = level
+        delta_star_masked[single] = 1.0
+        warnings.warn(f"{len(single)} site(s) with a single subject get no site correction "
+                      "(only the nuisance effects are removed).", UserWarning, stacklevel=2)
 
     # --------------------------------------------------- adjust data
     if verbose:
@@ -620,8 +652,9 @@ def comcat(
         denom = np.sqrt(delta_i)[:, None] * np.ones((1, n_batches[i]))
         if resid_std is not None:
             numer = resid_std[:, idx]
-            if use_eb:
-                # resid_std removed the L/S site effect; remove the EB one instead
+            if gamma_star_masked is not gamma_hat_masked:
+                # resid_std removed the L/S site effect; remove the EB one (or that of a
+                # site with a single subject) instead
                 shift = (gamma_hat_masked[i] - gamma_star_masked[i])[:, None]
                 if scale_model is not None:
                     shift = shift / _nuisance_scale_factor(nuisance_orig[idx], scale_model)
@@ -634,7 +667,8 @@ def comcat(
     Ym = np.where(np.isfinite(Ym), Ym, 0.0)
 
     # --------------------------------------------------- reconstruct
-    Y_harmonized = np.zeros((n_features, n_subjects), dtype=np.float64)
+    # features without variance keep their values
+    Y_harmonized = np.array(Y, dtype=np.float64)
     for i in range(n_subjects):
         pc_i = (XZ[i, ind_preserve] @ beta_hat[ind_preserve, :]) if n_X > 0 else 0.0
         Y_harmonized[ind_mask, i] = Ym[:, i] * std_pooled + grand_mean + pc_i
@@ -691,11 +725,15 @@ def comcat(
         'residual_delta':      bool(residual_delta or nuisance_scale or consistent),
         'combat_compatible':   bool(combat_compatible),
         'site_df':             site_df,
+        'var_scale':           var_scale,
         'nuisance_scale':      scale_model,
-        # empirical Bayes: applied site effects (None without eb) and priors
+        # applied site effects (None if they are the L/S estimates: without eb and
+        # without sites of a single subject) and the empirical Bayes priors
         'eb':                  use_eb,
-        'gamma_star_masked':   gamma_star_masked if use_eb else None,
-        'delta_star_masked':   delta_star_masked if use_eb else None,
+        'gamma_star_masked':   (gamma_star_masked if gamma_star_masked is not gamma_hat_masked
+                                else None),
+        'delta_star_masked':   (delta_star_masked if delta_star_masked is not delta_hat_masked
+                                else None),
         'eb_priors':           eb_priors,
         # nuisance model ('linear', 'pspline') and subject terms
         'nuisance_model':      nuisance_model,
@@ -858,6 +896,36 @@ def _subject_design(subject) -> np.ndarray:
     _, codes = np.unique(subject, return_inverse=True)
     D = (codes[:, None] == np.arange(codes.max() + 1)[None, :]).astype(float)
     return (D - D.mean(axis=0))[:, :-1]
+
+
+def _site_groups(site, subject) -> int:
+    """Number of groups of sites that are linked by subjects scanned at several of
+    them; with subject terms, only the differences within a group are identified."""
+    sites = np.unique(site)
+    parent = {s: s for s in sites.tolist()}
+
+    def root(s):
+        while parent[s] != s:
+            parent[s] = parent[parent[s]]
+            s = parent[s]
+        return s
+    for u in np.unique(subject):
+        at = np.unique(np.asarray(site)[np.asarray(subject) == u]).tolist()
+        for s in at[1:]:
+            parent[root(s)] = root(at[0])
+    return len({root(s) for s in sites.tolist()})
+
+
+def _check_finite(**arrays):
+    """Raise for missing or non-finite values of the covariate arrays."""
+    for name, a in arrays.items():
+        a = np.asarray(a, dtype=np.float64)
+        if a.size and not np.all(np.isfinite(a)):
+            bad = np.flatnonzero(~np.all(np.isfinite(a.reshape(len(a), -1)), axis=1))
+            raise ValueError(
+                f"{name} has missing or non-finite values for {bad.size} subject(s) "
+                f"(indices {bad[:10].tolist()}{' ...' if bad.size > 10 else ''}): remove "
+                "these subjects or impute the values.")
 
 
 def _screen_nuisance(nuisance, units, tol=1e-6) -> np.ndarray:
@@ -1406,6 +1474,7 @@ def comcat_from_training(
 
     nuisance = _to_col_matrix(nuisance, n_subjects)
     preserve = _to_col_matrix(preserve, n_subjects)
+    _check_finite(nuisance=nuisance, preserve=preserve)
     nuisance_raw = nuisance
 
     # Preserve spline expansion (preserve_df) with the training knots
@@ -1494,17 +1563,20 @@ def comcat_from_training(
         numer = Ym_std[:, idx] - (X_nuisance_new[idx, :] @ gamma_masked).T
         if scale_factor is not None:
             numer /= scale_factor[:, idx]
-        Ym_adj[:, idx] = numer
+        # with a reference site, the known sites are scaled to its variance
+        Ym_adj[:, idx] = numer if delta_ref is None else numer * np.sqrt(delta_ref)[:, None]
 
     Ym_adj = np.where(np.isfinite(Ym_adj), Ym_adj, 0.0)
 
-    # Reconstruct
-    Y_harmonized = np.zeros((n_features, n_subjects), dtype=np.float64)
+    # Reconstruct; features without variance in the training keep their values, and
+    # missing values stay missing
+    Y_harmonized = np.array(Y, dtype=np.float64)
     for i in range(n_subjects):
         pc_i = (preserve[i, :] @ beta_hat_preserve
                 if (n_X > 0 and beta_hat_preserve is not None) else 0.0)
         Y_harmonized[ind_mask, i] = Ym_adj[:, i] * std_pooled + grand_mean + pc_i
     Y_harmonized[ind_nan, :] = np.nan
+    Y_harmonized[~np.isfinite(Y)] = np.nan
 
     if ref_level is not None:
         ref_idx = np.concatenate([batches_new[ref_level]])
@@ -1531,7 +1603,7 @@ def comcat_crossfit(
     subject=None,
     seed: int = 0,
     return_folds: bool = False,
-    subject_terms: bool = True,
+    subject_terms: bool = False,
     **kwargs,
 ):
     """ComCAT with every subject harmonized by a model that was not fitted on it.
@@ -1541,8 +1613,10 @@ def comcat_crossfit(
     using a model fitted on the other folds.  All other samples (e.g. patients
     when fit marks the controls) are harmonized with the model fitted on all fit
     samples, so a disease effect cannot enter the estimated nuisance effects.
-    Samples of a site that has no fit sample in the other folds are also
-    harmonized with that model (with a warning).
+    Held-out samples of a site without fit samples in the other folds get no site
+    correction (unseen site; with a warning).  With ref_batch, the samples of the
+    reference site are in every fit and keep their values.  Features with missing
+    values are missing in the output, as in comcat().
 
     Parameters
     ----------
@@ -1550,14 +1624,14 @@ def comcat_crossfit(
     folds    : int k (k folds over subjects, or over samples without subject
                labels, stratified by site), or an array (n_subjects,) of fold labels
     fit      : bool array (n_subjects,) of the samples used for estimation
-    subject  : subject labels; all scans of a subject fall into one fold, and
-               with subject_terms they are passed on to comcat() (effects within
-               subjects)
+    subject  : subject labels of repeated scans: all scans of a subject fall into
+               one fold.  Without them, int folds split the scans of a subject
+               between the folds, so that its other scans enter the model that
+               harmonizes it.
     seed     : random seed of the folds
-    subject_terms : False keeps the scans of a subject in one fold but estimates
-               the effects across subjects, as without subject labels (the
-               cross-sectional model for repeated scans).  Without subject labels,
-               int folds would split the scans of a subject between the folds.
+    subject_terms : with subject labels, also add subject terms in comcat(): the
+               effects are then estimated within subjects (location only).  The
+               default False estimates them across subjects, as for single scans.
     kwargs   : further options of comcat()
 
     Returns Y_harmonized (orientation as Y), and with return_folds the folds.
@@ -1583,9 +1657,12 @@ def comcat_crossfit(
     P = None if preserve is None else _to_col_matrix(preserve, n)
     S = None if subject is None else np.asarray(subject).ravel()
     fit = np.ones(n, dtype=bool) if fit is None else np.asarray(fit, dtype=bool).ravel()
+    # the reference site keeps its data: its samples are in every fit
+    ref = (bvec == kwargs['ref_batch']) if kwargs.get('ref_batch') is not None else None
     if np.isscalar(folds):
-        folds = _make_folds(bvec, S, fit, int(folds), seed)
+        folds = _make_folds(bvec, S, fit if ref is None else fit & ~ref, int(folds), seed)
     folds = np.asarray(folds).ravel()
+    missing = ~np.all(np.isfinite(Y), axis=1)          # features with missing values
 
     # unpenalized B-splines: knots over all samples, so held-out values lie inside
     if (Z is not None and kwargs.get('nuisance_model', 'pspline') == 'spline'
@@ -1611,21 +1688,19 @@ def comcat_crossfit(
                                     unseen_batch='mean')
 
     H = np.full(Y.shape, np.nan)
-    rest = ~fit
-    for k in np.unique(folds[fit]):
+    n_unseen = 0
+    for k in np.unique(folds[fit & (folds >= 0)]):
         te = fit & (folds == k)
         est = fit_on(fit & (folds != k))
-        known = np.isin(bvec, est['batch_levels'])
-        if np.any(te & known):
-            H[:, te & known] = apply(est, te & known)
-        rest |= te & ~known
+        n_unseen += int(np.sum(te & ~np.isin(bvec, est['batch_levels'])))
+        H[:, te] = apply(est, te)
+    if n_unseen:
+        warnings.warn(f"{n_unseen} held-out sample(s) of sites without fit samples in the "
+                      "other folds get no site correction.", UserWarning, stacklevel=2)
+    rest = ~fit | (folds < 0)                       # incl. the reference site (kept)
     if np.any(rest):
-        n_unseen = int(np.sum(rest & fit))
-        if n_unseen:
-            warnings.warn(f"{n_unseen} sample(s) of sites without fit samples in the other "
-                          "folds were harmonized with the model of all fit samples.",
-                          RuntimeWarning, stacklevel=2)
         H[:, rest] = apply(fit_on(fit), rest)
+    H[missing] = np.nan
     H = H.T if transp else H
     return (H, folds) if return_folds else H
 

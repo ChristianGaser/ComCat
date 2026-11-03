@@ -226,8 +226,9 @@ def comcat_ui(
                     auto-selected from sample size: min(10, max(5, n//30)).
     eb            : empirical Bayes estimation of the site effects, as in ComBat
                     (default True; used with at least two sites).  Folder suffix
-                    '_eb' after '_sites'; eb=False reproduces earlier results and
-                    folder names.  With save_estimates, the saved gamma/delta are
+                    '_eb' after '_sites'; eb=False with combat_compatible=True and
+                    nuisance_model='spline' reproduces earlier results and folder
+                    names.  With save_estimates, the saved gamma/delta are
                     the empirical Bayes estimates that were applied.
 
     Optional extensions (off by default; see comcat.py for details)
@@ -600,7 +601,8 @@ def _build_parser() -> argparse.ArgumentParser:
                         'which do not shrink the residuals of small sites).')
     p.add_argument('--no-eb', action='store_true',
                    help='Disable empirical Bayes estimation of the site effects '
-                        '(L/S estimates as in earlier versions).')
+                        '(L/S estimates; earlier versions also need '
+                        '--combat-compatible and --nuisance-model spline).')
     p.add_argument('--subfolder', default=None,
                    help='Override auto-generated output subfolder name.')
     p.add_argument('--save-estimates', action='store_true',
