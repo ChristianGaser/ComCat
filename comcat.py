@@ -173,7 +173,11 @@ single_site_scale    : bool (default False)
                        combat_compatible=True).
 comcat_crossfit()    : every subject is harmonized with a model that was not fitted
                        on it (k-fold over subjects), optionally fitted on a subset such
-                       as the controls and applied to all others.
+                       as the controls and applied to all others.  With subject labels
+                       and subject_terms=False, the scans of a subject stay in one fold
+                       but the effects are estimated across subjects: the
+                       cross-sectional model for repeated scans, which are rare in
+                       practice; subject terms are mainly a reference.
 
 GAM smoothness recommendations (unpenalized 'spline' model)
 --------------------------------------------------------------
@@ -1527,6 +1531,7 @@ def comcat_crossfit(
     subject=None,
     seed: int = 0,
     return_folds: bool = False,
+    subject_terms: bool = True,
     **kwargs,
 ):
     """ComCAT with every subject harmonized by a model that was not fitted on it.
@@ -1546,8 +1551,13 @@ def comcat_crossfit(
                labels, stratified by site), or an array (n_subjects,) of fold labels
     fit      : bool array (n_subjects,) of the samples used for estimation
     subject  : subject labels; all scans of a subject fall into one fold, and
-               they are passed on to comcat() (effects within subjects)
+               with subject_terms they are passed on to comcat() (effects within
+               subjects)
     seed     : random seed of the folds
+    subject_terms : False keeps the scans of a subject in one fold but estimates
+               the effects across subjects, as without subject labels (the
+               cross-sectional model for repeated scans).  Without subject labels,
+               int folds would split the scans of a subject between the folds.
     kwargs   : further options of comcat()
 
     Returns Y_harmonized (orientation as Y), and with return_folds the folds.
@@ -1594,7 +1604,7 @@ def comcat_crossfit(
 
     def fit_on(m):
         return comcat(Y[:, m], None if batch is None else bvec[m], rows(Z, m), rows(P, m),
-                      subject=rows(S, m), **kwargs)[4]
+                      subject=rows(S, m) if subject_terms else None, **kwargs)[4]
 
     def apply(est, m):
         return comcat_from_training(Y[:, m], bvec[m], rows(Z, m), rows(P, m), estimates=est,
