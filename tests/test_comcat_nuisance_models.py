@@ -31,13 +31,10 @@ sys.path.insert(0, os.path.dirname(_HERE))
 
 from comcat import comcat, comcat_from_training, comcat_crossfit  # noqa: E402
 
-FAILED = []
-
-
 def check(name, ok, detail=''):
     print(f"  [{'PASS' if ok else 'FAIL'}] {name:55s} {detail}")
     if not ok:
-        FAILED.append(name)
+        raise AssertionError(f"{name} {detail}")
 
 
 def simulate(n=240, p=400, nonlinear=False, seed=0):
@@ -168,6 +165,24 @@ def test_crossfit_controls():
           f"fold sizes {np.bincount(folds).tolist()}")
 
 
+def test_crossfit_subject_folds():
+    print("comcat_crossfit: repeated scans across subjects, scans of a subject in one fold")
+    Y, subj, z, _, _ = traveling()
+    H, folds = comcat_crossfit(Y, None, z, None, folds=5, subject=subj, subject_terms=False,
+                               nuisance_model='linear', return_folds=True)
+    check("all scans of a subject in one fold",
+          all(np.unique(folds[subj == s]).size == 1 for s in np.unique(subj)))
+    H0 = comcat_crossfit(Y, None, z, None, folds=folds, nuisance_model='linear')
+    check("== given folds without subject labels", np.array_equal(H, H0),
+          f"max_abs={np.max(np.abs(H - H0)):.1e}")
+    Hw = comcat_crossfit(Y, None, z, None, folds=5, subject=subj, nuisance_model='linear')
+    check("differs from the model within subjects", not np.allclose(H, Hw))
+    f5 = comcat_crossfit(Y, None, z, None, folds=5, nuisance_model='linear',
+                         return_folds=True)[1]
+    check("int folds without subject labels split subjects",
+          any(np.unique(f5[subj == s]).size > 1 for s in np.unique(subj)))
+
+
 def test_screening():
     print("nuisance columns without variation within sites are dropped")
     Y, site, z, age, _ = simulate()
@@ -217,11 +232,9 @@ def test_default_model():
 if __name__ == '__main__':
     tests = [test_default_model, test_single_site_location_only,
              test_from_training_reproduces, test_pspline_smoothness,
-             test_heldout_error, test_subject_terms, test_crossfit_controls, test_screening]
+             test_heldout_error, test_subject_terms, test_crossfit_controls,
+             test_crossfit_subject_folds, test_screening]
     for t in tests:
         t()
     print()
-    if FAILED:
-        print(f"{len(FAILED)} check(s) failed: {FAILED}")
-        sys.exit(1)
     print(f"All {len(tests)} test groups passed.")
