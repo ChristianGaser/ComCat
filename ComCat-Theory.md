@@ -24,9 +24,13 @@ The lower bound of 5 ensures that nonlinear shape can be captured even in small 
 > **Note.** The basis is not penalized. With the seven CAT12 IQMs, which are partly redundant (SIQR ≈ res_ECR; IQR is largely a combination of NCR, ICR and res_RMS), the design is rank-deficient or near-singular. The fit then does not generalize to held-out scans. IQM effects estimated across subjects also partly reflect anatomy. See [HeldOut-Evaluation.md](HeldOut-Evaluation.md).
 
 
+#### Penalized B-splines (default)
+
+The basis above is the unpenalized one of earlier versions (`nuisance_model='spline'`). By default (`nuisance_model='pspline'`), every nuisance variable gets one unpenalized linear term and `gam_df` − 2 cubic B-spline terms for its nonlinear part (`gam_df` = 10), whose coefficients $b$ are penalized by $\lambda \sum b^2$ after a reparametrization of the second-order difference penalty of Eilers and Marx (1996). One smoothing parameter $\lambda$ for all nuisance variables is estimated by REML pooled over all features (alternatively GCV, or a fixed value), which makes it an empirical Bayes estimate of the size of the nonlinear nuisance effects across features; a large $\lambda$ gives the linear model. Parameter estimation (below) is then penalized least squares. New data are evaluated with the nonlinear part at the boundary of the training range, while the linear part continues. Nuisance variables that do not vary within the sites (or subjects) are dropped with a warning, and missing nuisance values are an error.
+
 #### Parameter estimation
 
-All parameters are estimated jointly in a single ordinary least squares (OLS) step on the full design matrix:
+All parameters are estimated jointly in a single ordinary least squares (OLS) step on the full design matrix (penalized least squares with the default P-splines):
 
 $$\hat{\boldsymbol{\beta}} = \text{pinv}\left(\bigl[\mathbf{B}\ \tilde{\mathbf{Z}}\ \mathbf{X}\bigr]\right) \cdot Y^T$$
 
@@ -58,7 +62,7 @@ The site-specific multiplicative (variance) effects are estimated directly from 
 
 $$\hat{\delta}_{i,v}^2 = \text{Var}\left( Y_{v,\text{batch}=i}^{\text{std}} \right)$$
 
-Estimating $\hat{\delta}_{i,v}^2$ from the within-site variance directly — without first removing the additive nuisance effects — preserves the full per-site variance structure that the multiplicative correction is intended to remove. If the mean-only option is set, $\hat{\delta}_{i,v}^2 = 1$ for all batches.
+This is the estimator of ComBat and of earlier versions (`combat_compatible=True`); by default, the site variances come from the residuals after the site and nuisance effects, with df-consistent degrees of freedom (see below). Estimating $\hat{\delta}_{i,v}^2$ from the within-site variance directly — without first removing the additive nuisance effects — preserves the full per-site variance structure that the multiplicative correction is intended to remove. If the mean-only option is set, $\hat{\delta}_{i,v}^2 = 1$ for all batches.
 
 > **Note.** Because $\hat{\delta}_{i,v}^2$ includes the variance explained by the nuisance effects, dividing the nuisance-adjusted residuals by it also reduces the residual variance itself. The optional `residual_delta` estimator (see *Optional extensions*) estimates $\hat{\delta}_{i,v}^2$ after removing the nuisance effects, as ComBat does.
 
@@ -79,7 +83,7 @@ whose hyperparameters are estimated by the method of moments from $\hat{\gamma}^
 
 $$\gamma^{*}_{i,v} = \frac{n_i\bar{\tau}_i^2\,\hat{\gamma}^{c}_{i,v} + \delta^{2*}_{i,v}\,\bar{\gamma}_i}{n_i\bar{\tau}_i^2 + \delta^{2*}_{i,v}}, \qquad \delta^{2*}_{i,v} = \frac{\theta_i + \frac{1}{2}\left[(n_i - 1)\,\hat{\delta}_{i,v}^2 + n_i\left(\hat{\gamma}^{c}_{i,v} - \gamma^{*}_{i,v}\right)^2\right]}{n_i/2 + \lambda_i - 1}$$
 
-until the largest relative change is below $10^{-4}$, with the stopping rule of ComBat. The bracket is the sum of squares of the standardized data of site $i$ around $\gamma^{*}_{i,v}$, written in terms of the sufficient statistics $\hat{\gamma}$ and $\hat{\delta}^2$. The same step therefore applies to every estimator of $\hat{\delta}^2$: the default, `residual_delta` and `nuisance_scale`. It also runs on the aggregator in the decentralized version. The common offset is added back to $\gamma^{*}_{i,v}$, and the result replaces the site rows of $\hat{\gamma}_v$ in the adjustment below, as $\delta^{2*}_{i,v}$ replaces $\hat{\delta}_{i,v}^2$. With `mean_only`, $\delta^{2*}$ enters the posterior of $\gamma$, but the data are not scaled. A reference site keeps its L/S estimates because its data are not changed. Sites with a single subject are left out.
+until the largest relative change is below $10^{-4}$, with the stopping rule of ComBat. The bracket is the sum of squares of the standardized data of site $i$ around $\gamma^{*}_{i,v}$, written in terms of the sufficient statistics $\hat{\gamma}$ and $\hat{\delta}^2$. The same step therefore applies to every estimator of $\hat{\delta}^2$: the default, `residual_delta` and `nuisance_scale`. It also runs on the aggregator in the decentralized version. The common offset is added back to $\gamma^{*}_{i,v}$, and the result replaces the site rows of $\hat{\gamma}_v$ in the adjustment below, as $\delta^{2*}_{i,v}$ replaces $\hat{\delta}_{i,v}^2$. With `mean_only`, $\delta^{2*}$ enters the posterior of $\gamma$, but the data are not scaled. A reference site keeps its L/S estimates because its data are not changed. A site with a single subject gets no site correction: its site effect cannot be separated from that subject's deviation, which the L/S estimate would remove. It gets the size-weighted mean level of the other sites and variance 1, as an unseen site in `comcat_from_training()`.
 
 Without nuisance covariates and with `combat_compatible=True`, $\hat{\gamma}$, $\hat{\delta}^2$ and the standardization are those of ComBat. ComCat then equals ComBat with empirical Bayes: it agrees with `combat_family.combat_eb()`, the port of the R package ComBatFamily, to ~1e-13 (`tests/test_comcat_eb.py`). The posterior above is the one of `combat_compatible=True`; the default is described next.
 
@@ -87,7 +91,7 @@ Without nuisance covariates and with `combat_compatible=True`, $\hat{\gamma}$, $
 
 In ComBat, the pooled variance of the standardization divides the residual sum of squares by $N$, $\hat{\sigma}^2 = \text{RSS}/N$, whereas $\hat{\delta}_{i,v}^2$ divides the sum of squares of site $i$ by $n_i - 1$, and the posterior above divides by $n_i$. Under equal site variances, the residual sum of squares of site $i$ has the expectation $\sigma^2(n_i - h_i)$, with $h_i$ the summed leverage of its subjects, and $\text{RSS}$ has $\sigma^2(N - \text{tr}\,\mathbf{H})$. The ComBat estimate therefore has the expectation $\frac{n_i - h_i}{n_i - 1}\cdot\frac{N}{N - \text{tr}\,\mathbf{H}}$, which exceeds 1 when many sites are small ($\text{tr}\,\mathbf{H}$ grows with the number of sites). Dividing by it shrinks the harmonized residuals, also of new subjects, although the sites do not differ in variance: held out, to about 0.85 of the residual variance of a location-only correction with 3 subjects per site in the fit, 0.92 with 5, 0.97 with 10 and 1.00 with 40 (`tests/test_comcat_scale.py`).
 
-By default, the site variance is the ratio of two unbiased residual variances,
+By default, the site variance is the ratio of two residual variances that are unbiased for unpenalized (and linear) terms,
 
 $$\hat{\delta}_{i,v}^2 = \frac{\text{RSS}_{i,v} / \nu_i}{\text{RSS}_v / (N - \text{tr}\,\mathbf{H})}, \qquad \nu_i = n_i - \sum_{j \in i} H_{jj},$$
 
@@ -138,18 +142,18 @@ and the other sites are scaled to the variance of site $r$ instead of the pooled
 
 $$Y_{v,\text{batch}=i}^{\text{adj}} = \frac{Y_{v,\text{batch}=i}^{\text{std}} - [\mathbf{B}\ \tilde{\mathbf{Z}}]_{\text{batch}=i}\gamma^{*}_v}{\sqrt{\delta^{2*}_{i,v} / \hat{\delta}_{r,v}^2}}$$
 
-With empirical Bayes, the location effects of the other sites are shrunk as differences to site $r$. The variance $\hat{\delta}_{r,v}^2$ of site $r$ is not shrunk, because it is the variance of its unchanged data. With `residual_delta` (see *Optional extensions*), the residual variance of every harmonized site then equals that of the reference site, up to the shrinkage of $\delta^{2*}_{i,v}$. With the default $\hat{\delta}$, this holds only if the nuisance terms explain the same share of the within-site variance at both sites.
+With empirical Bayes, the location effects of the other sites are shrunk as differences to site $r$. The variance $\hat{\delta}_{r,v}^2$ of site $r$ is not shrunk, because it is the variance of its unchanged data. With `residual_delta` (see *Optional extensions*), the residual variance of every harmonized site then equals that of the reference site, up to the shrinkage of $\delta^{2*}_{i,v}$. With ComBat's $\hat{\delta}$ (`combat_compatible=True`), this holds only if the nuisance terms explain the same share of the within-site variance at both sites.
 
 
 #### Optional extensions
 
-Three extensions can be enabled in `comcat()` / `comcat_ui()`. All are off by default; the default output is identical to the model described above. Empirical Bayes applies to each of them.
+Three extensions can be enabled in `comcat()` / `comcat_ui()`. All are off by default. Empirical Bayes applies to each of them.
 
 **1. Flexible preserved covariates (`preserve_df`).** Each continuous preserved covariate $x_r$ (at least `preserve_df` + 2 distinct values) is expanded into the same kind of B-spline basis as the nuisance covariates, $x_r \mapsto \tilde{\mathbf{X}}_r = [b_1(x_r), \ldots, b_d(x_r)]$; binary or categorical covariates stay linear. Estimation is unchanged, with $\tilde{\mathbf{X}}$ in place of $\mathbf{X}$ in the joint model, and the preserved effect $\tilde{\mathbf{X}}_j\hat{\boldsymbol{\beta}}_{\tilde{X},v}$ is added back.
 
 *Rationale.* With a linear $\mathbf{X}$ and a spline-expanded $\tilde{\mathbf{Z}}$, the model is more flexible for the nuisance than for the effects of interest. If $\mathbf{Z}$ depends non-linearly on $\mathbf{X}$ (for example, image quality is worse in children and older adults), functions in the span of $\tilde{\mathbf{Z}}$ can represent the non-linear part of the effect of $\mathbf{X}$. The joint OLS then attributes that part to $\tilde{\mathbf{Z}}$, and it is removed. With $\tilde{\mathbf{X}}$ in the model, the non-linear effect of interest is fitted explicitly and the nuisance coefficients are estimated conditional on it. In a simulation with a lifespan-like age curve and seven IQMs that are U-shaped functions of age, the linear age term lost ~70–80% of the age curve, whereas with `preserve_df` the loss was ~4–5% (`tests/test_comcat_options.py`).
 
-**2. Site variances from residuals (`residual_delta`).** Write the standardized data of site $i$ as $Y^{\text{std}} = \gamma_i + \tilde{\mathbf{Z}}\hat{\gamma}_Z + e$. The default estimator is
+**2. Site variances from residuals (`residual_delta`).** Write the standardized data of site $i$ as $Y^{\text{std}} = \gamma_i + \tilde{\mathbf{Z}}\hat{\gamma}_Z + e$. The estimator of ComBat (`combat_compatible=True` without `residual_delta`) is
 
 $$\hat{\delta}_{i,v}^2 = \text{Var}_i\left(Y_v^{\text{std}}\right) \approx \text{Var}_i\left(\tilde{\mathbf{Z}}\hat{\gamma}_{Z,v}\right) + \text{Var}_i\left(e_v\right),$$
 

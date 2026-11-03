@@ -2,8 +2,10 @@
 
 Harmonize data that is split across **sites which never share raw imaging data**.
 Each site keeps its own `Y`; only aggregate statistics are exchanged, and the
-result matches a centralized [`comcat()`](comcat.py) run to machine precision
-(the GAM B-spline basis is reproduced bitwise).
+result matches a centralized [`comcat()`](comcat.py) run with
+`nuisance_model='spline'` and `combat_compatible=True` to machine precision (the GAM
+B-spline basis is reproduced bitwise). The defaults of `comcat()`, P-splines with REML
+and df-consistent site variances, are not implemented here.
 
 > **Status: experimental.** This is a standalone module
 > ([`decentralized_comcat.py`](decentralized_comcat.py)). It is not wired into
@@ -92,8 +94,9 @@ harmonized, estimates = decentralized_harmonize(
 ```
 
 `harmonized[k]` is bit-for-bit the columns that centralized
-`comcat(np.hstack(site_Y), batch, nuisance=..., preserve=...)` would produce for
-site *k* (up to ~1e-13 from the regression; the GAM basis is exact).
+`comcat(np.hstack(site_Y), batch, nuisance=..., preserve=..., nuisance_model='spline',
+combat_compatible=True)` would produce for site *k* (up to ~1e-13 from the regression;
+the GAM basis is exact).
 
 ---
 

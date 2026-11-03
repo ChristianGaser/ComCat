@@ -4,17 +4,61 @@
 
 ### Added — cross-sectional model for repeated scans
 
-- `comcat_crossfit(..., subject=labels, subject_terms=False)` keeps all scans of a
-  subject in one fold but estimates the effects across subjects, as for single scans.
-  Before, `subject=` always added subject terms (effects within subjects), and the
-  cross-sectional model of repeated scans needed fold labels made with the private
-  `_make_folds()`; `folds=k` without subject labels splits the scans of a subject
-  between the folds. The default `subject_terms=True` keeps the earlier behaviour. The
-  README recommends the cross-sectional model for repeated scans, with subject terms as
-  a reference, and its cross-fitting example now uses the df-consistent site variances
-  instead of `mean_only=True`.
-- `tests/test_comcat_nuisance_models.py`: `check()` raises, as in the other test files,
-  so that pytest reports failed checks (before, only the script's exit code did).
+- `comcat_crossfit(..., subject=labels)` keeps all scans of a subject in one fold and,
+  by default (`subject_terms=False`), estimates the effects across subjects, as for
+  single scans; `subject_terms=True` adds subject terms (effects within subjects, the
+  behaviour of `subject=` before). `folds=k` without subject labels splits the scans of
+  a subject between the folds. The README recommends the cross-sectional model for
+  repeated scans, with subject terms as a reference (and for few subjects scanned
+  unevenly across sites), and its cross-fitting example now uses the df-consistent site
+  variances instead of `mean_only=True`.
+- A warning when subject terms cannot identify site effects: sites that are not linked
+  by subjects scanned at several of them (e.g. every subject at one site).
+
+### Fixed — sites with a single subject
+
+- The location of such a site is that subject's whole deviation. In-sample, the subject
+  was therefore replaced by its predicted values (both settings of `combat_compatible`),
+  and every other scan of the site, e.g. patients when fitted on the controls, had that
+  subject's anatomy subtracted. With `combat_compatible=True`, the site variance was
+  also undefined (NaN), and new scans of the site were replaced by their predicted
+  values. Such sites now get no site correction, as unseen sites: the size-weighted
+  mean level of the other sites and variance 1 (warning). ADNI fitted on the controls
+  has 4 sites with one control (25 subjects).
+- `comcat_crossfit`: held-out samples of a site without fit samples in the other folds
+  were harmonized with the model of all fit samples, i.e. in-sample (for a site with one
+  subject: replaced by its predicted values). They now get the fold's model without site
+  correction (warning). With `ref_batch`, the reference site is in every fit and keeps
+  its data (before: an error if it had a single unit).
+
+### Fixed — features and missing values
+
+- Features without variance were returned as 0; they keep their values (in
+  `comcat_from_training()`, features without variance in the training keep the new
+  values).
+- `comcat_from_training()` replaced missing values of the data by predicted values; they
+  stay missing. `comcat_crossfit()` sets features with missing values to missing for
+  all samples, as `comcat()` does.
+- Missing or non-finite nuisance or preserved values raise an error (before, one
+  missing IQM value silently dropped the whole column, with a misleading warning).
+- `comcat_from_training()`: with `ref_batch`, samples of unseen sites are scaled to the
+  variance of the reference site, as the known sites.
+- The estimates store `var_scale` (pooled variance of the standardization relative to
+  the unbiased one), needed to express df-consistent site variances in data units.
+
+### Tests and documentation
+
+- `tests/test_comcat_edge_cases.py` (new); `test_single_subject_site` checks the
+  location as well; `test_defaults_unchanged` checks the documented defaults (before, it
+  compared two identical calls); the EB test expresses site variances with `var_scale`;
+  `check()` in `tests/test_comcat_nuisance_models.py` raises, as in the other files.
+- README and ComCat-Theory.md: default P-splines and residual site variances described
+  as the defaults, corrected claims of bit-identity with earlier versions (they need
+  `combat_compatible=True` and `nuisance_model='spline'`), folder names with `_dfc`,
+  full signatures, the decentralized version (matches only with those two settings).
+- README: `tests/test_comcat_py.py` (comparison with the MATLAB `comcat.m`) agrees only
+  without nuisance variables since the B-spline nuisance model (2026-06; `comcat.m`
+  uses polynomials); stated, generator in `deprecated/gen_test_data.m`.
 
 ## Unreleased (2026-11-02)
 

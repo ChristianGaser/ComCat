@@ -101,7 +101,9 @@ Add the repository directory to your Python path or pass it via `sys.path.insert
 
 > **Decentralized / federated use:** to harmonize data split across sites that
 > cannot share raw data, see **[Decentralized.md](Decentralized.md)**. The result
-> matches centralized `comcat()` to machine precision.
+> matches centralized `comcat(..., nuisance_model='spline', combat_compatible=True)` to
+> machine precision; the default P-splines and df-consistent site variances are not
+> implemented there.
 
 ---
 
@@ -129,14 +131,14 @@ Y_harmonized, beta_hat, gamma_hat, delta_hat = comcat(
 | `Y_harmonized` | `(n_features, n_subjects)` | Harmonized data |
 | `beta_hat` | `(n_params, n_features)` | Full design-matrix coefficients |
 | `gamma_hat` | `(n_batch+n_Z, n_features)` | Additive batch/nuisance effects removed from the data (empirical Bayes estimates in the site rows when `eb=True`) |
-| `delta_hat` | `(n_batch, n_features)` | Multiplicative batch effects removed from the data (empirical Bayes estimates when `eb=True`) |
+| `delta_hat` | `(n_batch+n_Z, n_features)` | Multiplicative site effects removed from the data in the site rows (empirical Bayes estimates when `eb=True`); the nuisance rows are not applied |
 
 **Key parameters**
 
 | Parameter | Default | Description |
 |---|---|---|
 | `mean_only` | `False` | Adjust mean only; skip variance scaling |
-| `eb` | `True` | Empirical Bayes estimation of the site effects, as in ComBat (used with ≥ 2 sites); `False` gives the L/S estimates of earlier versions |
+| `eb` | `True` | Empirical Bayes estimation of the site effects, as in ComBat (used with ≥ 2 sites); `False` gives the L/S estimates (earlier versions also need `combat_compatible=True` and `nuisance_model='spline'`) |
 | `ref_batch` | `None` | Site label to treat as reference (its data is left untouched; the other sites are harmonized to its mean and variance) |
 | `return_estimates` | `False` | Return a 5th element (dict) for use with `comcat_from_training()` |
 | `smooth_term_bounds` | `None` | Explicit boundary knots for the nuisance splines |
@@ -168,7 +170,7 @@ Y_test_harm = comcat_from_training(
 ```
 
 > [!IMPORTANT]
-> When using train/test workflows, always specify `smooth_term_bounds` so knot positions are identical between training and new data.
+> With `nuisance_model='spline'` in train/test workflows, always specify `smooth_term_bounds` (the range of the nuisance variables in both datasets) so knot positions are identical between training and new data. P-splines and linear terms extrapolate linearly.
 
 ### Nuisance modelling: B-spline GAM
 
@@ -204,12 +206,15 @@ has few subjects or its estimates are noisy, and negligible for large sites. The
 is in [ComCat-Theory.md](ComCat-Theory.md#empirical-bayes-estimation-of-site-effects),
 and the tests are in `tests/test_comcat_eb.py`.
 
-- **On by default** (`eb=True`). `eb=False` reproduces the results of earlier versions
-  bit for bit. With a single site (or `batch=None`), EB is not used.
+- **On by default** (`eb=True`). `eb=False` with `combat_compatible=True` and
+  `nuisance_model='spline'` reproduces the results of earlier versions bit for bit. With
+  a single site (or `batch=None`), EB is not used.
 - **What is shrunk.** ComCAT's site coefficients contain an offset from the nuisance
   model. They are therefore shrunk as differences to the size-weighted mean of the
   sites (or to `ref_batch`), which are ComBat's site effects. A reference site keeps its
-  estimates, and sites with one subject are left out.
+  estimates. A site with a single subject gets no site correction (size-weighted mean
+  level of the other sites, variance 1, as an unseen site): its site effect cannot be
+  separated from that subject, whose deviations would otherwise be removed.
 - **Without nuisance covariates** and with `combat_compatible=True`, the result equals
   ComBat with EB (`combat_family.combat_eb()`) to ~1e-13. By default, the site variances
   and their posteriors are df-consistent (see `combat_compatible`).
@@ -217,9 +222,9 @@ and the tests are in `tests/test_comcat_eb.py`.
   `return_estimates=True`, the dict holds the L/S estimates (`gamma_hat_masked`,
   `delta_hat_masked`), the EB estimates (`gamma_star_masked`, `delta_star_masked`)
   and the priors (`eb_priors`). `comcat_from_training()` applies the EB estimates.
-- **Output folder.** `comcat_ui()` adds `_eb` after `_sites`, for example
-  `comcat_sites_eb_preserve1_nuisance7_gam5`. EB results therefore never overwrite
-  results of earlier versions. CLI: `--no-eb`.
+- **Output folder.** `comcat_ui()` adds `_eb` after `_sites` (and `_dfc` for the
+  df-consistent site variances), for example `comcat_sites_eb_dfc_preserve1_nuisance7_pspline`.
+  EB results therefore never overwrite results of earlier versions. CLI: `--no-eb`.
 
 Why it matters: with small sites, the L/S variance δ is estimated from a handful of
 values, and dividing by it can blow up single features. On real data (gray matter,
@@ -244,7 +249,9 @@ location shrinkage has almost no effect. The variance shrinkage still applies.
 ### Optional model extensions
 
 Three options extend the model. All are **off by default**: without them and with
-`eb=False` and `combat_compatible=True`, `comcat()` and `comcat_ui()` give bit-identical results to earlier versions.
+`eb=False`, `combat_compatible=True` and `nuisance_model='spline'` (and
+`single_site_scale=True` with one site), `comcat()` and `comcat_ui()` give bit-identical
+results to earlier versions.
 The maths is in [ComCat-Theory.md](ComCat-Theory.md#optional-extensions), and the
 behaviour is tested in `tests/test_comcat_options.py`.
 
@@ -263,23 +270,27 @@ simulated lifespan setting with seven such IQMs, ~70–80% of the age curve was 
 with a linear age term, against ~5% with `preserve_df='same'`. This matters most for
 wide age ranges (e.g. the normative sample) and hardly at all for narrow ones.
 
-**`residual_delta` — site variances from residuals.** By default (as in the MATLAB
-implementation), δ is the within-site variance of data that still contain the
-nuisance effects. The adjusted residuals are divided by it, so their variance shrinks
+**`residual_delta` — site variances from residuals (with `combat_compatible=True`).**
+By default, the site variances always come from the residuals (df-consistent, see
+`combat_compatible`), and one site gets the location correction only. With
+`combat_compatible=True` (as in the MATLAB implementation and earlier versions), δ is
+the within-site variance of data that still contain the nuisance effects. The adjusted residuals are divided by it, so their variance shrinks
 to about `1 − R²` of the within-site nuisance fit. On ON-Harmony (8 mm, 7 IQMs) the
 residual variance of the harmonized data is 42% of the model residual variance at
 `gam_df=5`, and 13% at `gam_df=10`. On Tohoku (one subject, 121 scans) IQM removal
 alone leaves 23% of the scan-to-scan variance, and the δ step reduces this further to
 5%. Because the shrinkage grows with `gam_df`, it is worth checking results that
-depend on individual variance (e.g. BrainAGE MAE) with `residual_delta=True`. Only
-`mean_only=True` avoids the effect, and `comcat_ui()` treats a missing `batch` as one
-site, so single-site runs are affected too.
+depend on individual variance (e.g. BrainAGE MAE) with `residual_delta=True`. With
+`combat_compatible=True`, only `mean_only=True` avoids the effect, and single-site runs
+are affected too with `single_site_scale=True`.
 
 **`combat_compatible` — site variances as in ComBat.** By default, the site variances
 δ (scale step) are df-consistent: for every site and feature, the residual sum of
 squares of the site over its residual degrees of freedom (n_i minus the summed leverage
 of its subjects in the full, penalized model), relative to the pooled residual variance
-RSS / (n − trace H). The empirical Bayes posterior treats δ̂ as a sum of squares with
+RSS / (n − trace H) (unbiased for unpenalized and linear terms; for penalized splines
+an approximation, close when REML chooses nearly linear effects). The empirical Bayes
+posterior treats δ̂ as a sum of squares with
 these degrees of freedom, and its inverse-gamma prior describes the spread of the true
 site variances across features (net of the sampling variance 2δ²/df). Sites of equal
 variance then get δ ≈ 1, and the scale step equalizes the sites without shrinking the
@@ -371,9 +382,14 @@ H = comcat_crossfit(
   without it, `folds=k` splits them, and the other scans of a subject enter the model
   that harmonizes it. Use the same cross-sectional model as for single scans
   (`subject_terms=False`), with enough subjects for the IQM model (about 70; with fewer,
-  sites only). Subject terms (`subject_terms=True`, the default for compatibility)
-  estimate the effects within subjects, location only: a reference for traveling-subject
-  and test-retest data, which are rare in practice.
+  sites only). Subject terms (`subject_terms=True`) estimate the effects within
+  subjects, location only: a reference for traveling-subject and test-retest data, which
+  are rare in practice, and needed when few subjects were scanned unevenly across sites
+  (ON-Harmony). They identify site effects only between sites linked by subjects scanned
+  at several of them (warning otherwise).
+- **Sites without fit samples.** In `comcat_crossfit`, held-out samples of a site
+  without fit samples in the other folds get no site correction (unseen site, with a
+  warning), as do sites with a single subject in any fit.
 - **Preserved covariates** matter only for the estimation in location-only mode: the
   harmonized data are `Y - nuisance effect`, so the preserved fit cannot leak into
   BrainAGE. With a variance step, every scan is pulled toward the preserved fit at its
@@ -424,10 +440,10 @@ python comcat_ui.py --help
 Harmonized files are saved into an auto-generated subfolder next to the input files. The folder name encodes the harmonization settings, for example:
 
 ```
-comcat_sites_eb_preserve1_nuisance1_pspline/  # sites + nuisance, default settings
-comcat_sites_preserve1_nuisance1_gam6/        # eb=False, nuisance_model='spline', gam_df=6 (earlier versions)
-combat_sites_eb/
-comcat_meanonly_nuisance2_pspline/            # single site: location only, no empirical Bayes
+comcat_sites_eb_dfc_preserve1_nuisance1_pspline/  # sites + nuisance, default settings
+comcat_sites_preserve1_nuisance1_gam6/            # eb=False, combat_compatible=True, nuisance_model='spline', gam_df=6 (earlier versions)
+combat_sites_eb_dfc/                              # sites only (combat_sites_eb with combat_compatible=True)
+comcat_meanonly_nuisance2_pspline/                # single site: location only, no empirical Bayes
 ```
 
 Override the folder name with the `subfolder` parameter. For MAT/TXT files, the output file is placed inside the subfolder with the same file name.
@@ -575,17 +591,18 @@ Results are stored as arrays of shape `(n_a2, n_a4, n_nuisance, n_methods)` for 
 
 | Script | Needs | Tests |
 |---|---|---|
-| `tests/test_comcat_py.py` | MATLAB reference files | Python port vs `comcat.m` (below) |
+| `tests/test_comcat_py.py` | MATLAB reference files | Python port vs `comcat.m` (below; outdated for nuisance variables) |
 | `tests/test_comcat_options.py` | — | Optional extensions on simulated data with known effects; defaults unchanged; `comcat_from_training()` reproduces the in-sample result |
-| `tests/test_comcat_scale.py` | — | Scale step: df-consistent site variances about 1 at every site size, residual variance kept in-sample and held out (ComBat-compatible: shrunk), unequal sites equalized |
+| `tests/test_comcat_scale.py` | — | Scale step: df-consistent site variances about 1 at every site size, residual variance kept in-sample and held out (ComBat-compatible: shrunk), unequal sites equalized, sites with a single subject not corrected |
+| `tests/test_comcat_edge_cases.py` | — | Features without variance, missing values, missing covariates (error), subject terms with subjects nested in sites (warning), cross-fit with held-out samples of unseen sites and with a reference site |
 | `tests/test_comcat_eb.py` | — | Empirical Bayes: equals ComBat (`combat_eb`) without nuisance and with `combat_compatible=True`; site effects and harmonized data closer to the truth than L/S in a simulation with small sites and IQMs; `ref_batch`; `comcat_from_training()` |
 | `tests/test_combat_family.py` | R + ComBatFamily (optional) | CovBat / ComBatLS / ComBat-EB properties and agreement with the R package |
 
 ### `test_comcat_py.py`
 
-Validates that `comcat.py` produces results numerically identical to the MATLAB reference implementation within float32 tolerances (`atol=1e-4`, `rtol=1e-4`).
+Validates that `comcat.py` produces results numerically identical to the MATLAB reference implementation within float32 tolerances (`atol=1e-4`, `rtol=1e-4`). The MATLAB `comcat.m` (now in `deprecated/`) expands the nuisance variables into orthogonalized polynomials of degree 2 or 3, which the Python port no longer offers. Since the B-spline nuisance model (2026-06), only the case without nuisance variables (case 3) agrees; the cases with nuisance variables fail, with or without the changes since then.
 
-**Step 1** — Generate test data in MATLAB and place the `test_case*.mat` files in the `tests/` directory (the test script looks for them next to itself):
+**Step 1** — Generate test data in MATLAB (`deprecated/gen_test_data.m`) and place the `test_case*.mat` files in the `tests/` directory (the test script looks for them next to itself):
 ```matlab
 gen_test_data   % produces test_case1.mat, test_case2.mat, test_case3.mat
 ```
@@ -648,7 +665,7 @@ from comcat import comcat, comcat_from_training
 _, _, _, _, estimates = comcat(
     Y_train, batch_train, nuisance_train, preserve_train,
     return_estimates=True,
-    smooth_term_bounds=(18.0, 90.0),  # age range covering both datasets
+    smooth_term_bounds=(0.1, 0.5),   # range of the nuisance variable in both datasets ('spline')
 )
 
 # New data
@@ -685,10 +702,11 @@ comcat(
     nuisance_penalty = None,    # 'pspline': None/'reml', 'gcv' or a fixed penalty
     subject        = None,      # subject labels: effects estimated within subjects
     single_site_scale = False,  # one site: True = variance step of earlier versions
+    combat_compatible = False,  # True: site variances and EB posteriors of ComBat
 )
 ```
 
-`comcat_crossfit(Y, batch, nuisance, preserve, folds=5, fit=None, subject=None, subject_terms=True, **options)`
+`comcat_crossfit(Y, batch, nuisance, preserve, folds=5, fit=None, subject=None, seed=0, return_folds=False, subject_terms=False, **options)`
 harmonizes every subject with a model fitted without it (`fit`: e.g. the controls; all
 other subjects are harmonized with the model of all `fit` subjects). `subject` keeps the
 scans of a subject in one fold; `subject_terms=False` then estimates the effects across
@@ -716,6 +734,7 @@ comcat_ui(
     nuisance_model = 'pspline',
     nuisance_penalty = None,
     single_site_scale = False,
+    combat_compatible = False,
 )
 ```
 
