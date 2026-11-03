@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased (2026-11-03)
+
+### Added — cross-sectional model for repeated scans
+
+- `comcat_crossfit(..., subject=labels, subject_terms=False)` keeps all scans of a
+  subject in one fold but estimates the effects across subjects, as for single scans.
+  Before, `subject=` always added subject terms (effects within subjects), and the
+  cross-sectional model of repeated scans needed fold labels made with the private
+  `_make_folds()`; `folds=k` without subject labels splits the scans of a subject
+  between the folds. The default `subject_terms=True` keeps the earlier behaviour. The
+  README recommends the cross-sectional model for repeated scans, with subject terms as
+  a reference, and its cross-fitting example now uses the df-consistent site variances
+  instead of `mean_only=True`.
+- `tests/test_comcat_nuisance_models.py`: `check()` raises, as in the other test files,
+  so that pytest reports failed checks (before, only the script's exit code did).
+
 ## Unreleased (2026-11-02)
 
 ### Changed — df-consistent site variances (default)

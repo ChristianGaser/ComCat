@@ -344,7 +344,8 @@ The default nuisance model is penalized B-splines (`nuisance_model='pspline'`) w
 smoothing parameter estimated by REML across all features. The unpenalized B-splines of
 earlier versions (`'spline'`) overfit when several IQMs are used and do not generalize to
 new scans ([HeldOut-Evaluation.md](HeldOut-Evaluation.md)). For BrainAGE, the revision of
-the ComCat paper uses (site variances off, i.e. location correction only):
+the ComCat paper uses (sites in location and scale with the df-consistent site variances,
+IQM effects in location):
 
 ```python
 from comcat import comcat_crossfit
@@ -353,9 +354,9 @@ H = comcat_crossfit(
     Y, site, iqm[:, [ICR, NCR, res_ECR, contrastr]], preserve,   # no IQR/SIQR
     folds=5,                     # every subject harmonized by a model fitted without it
     fit=controls,                # optional: estimate on controls, apply to everybody
-    subject=subject_ids,         # repeated scans: effects estimated within subjects
+    subject=subject_ids,         # repeated scans: all scans of a subject in one fold
+    subject_terms=False,         # effects across subjects (True: within subjects)
     nuisance_model='pspline',    # penalized splines, smoothing by REML (or 'linear')
-    mean_only=True,              # location correction of the IQM effects
 )
 ```
 
@@ -366,6 +367,13 @@ H = comcat_crossfit(
   most samples it chose nearly linear ones.
 - **One site.** Location correction only (default); the variance step would rescale all
   residuals by about sqrt(1 - R²) of the nuisance fit.
+- **Repeated scans.** Give `subject=` so that all scans of a subject stay in one fold;
+  without it, `folds=k` splits them, and the other scans of a subject enter the model
+  that harmonizes it. Use the same cross-sectional model as for single scans
+  (`subject_terms=False`), with enough subjects for the IQM model (about 70; with fewer,
+  sites only). Subject terms (`subject_terms=True`, the default for compatibility)
+  estimate the effects within subjects, location only: a reference for traveling-subject
+  and test-retest data, which are rare in practice.
 - **Preserved covariates** matter only for the estimation in location-only mode: the
   harmonized data are `Y - nuisance effect`, so the preserved fit cannot leak into
   BrainAGE. With a variance step, every scan is pulled toward the preserved fit at its
@@ -680,9 +688,11 @@ comcat(
 )
 ```
 
-`comcat_crossfit(Y, batch, nuisance, preserve, folds=5, fit=None, subject=None, **options)`
+`comcat_crossfit(Y, batch, nuisance, preserve, folds=5, fit=None, subject=None, subject_terms=True, **options)`
 harmonizes every subject with a model fitted without it (`fit`: e.g. the controls; all
-other subjects are harmonized with the model of all `fit` subjects).
+other subjects are harmonized with the model of all `fit` subjects). `subject` keeps the
+scans of a subject in one fold; `subject_terms=False` then estimates the effects across
+subjects instead of within them.
 
 ### `comcat_ui()` full signature
 
