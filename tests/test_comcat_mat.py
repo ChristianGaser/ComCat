@@ -51,6 +51,28 @@ def simulate(d, n=90, p=40, seed=0):
                 q=np.loadtxt(os.path.join(d, 'iqm.txt')), group=group)
 
 
+def test_min_scale_n():
+    with tempfile.TemporaryDirectory() as d:
+        s = simulate(d)
+        f = lambda name: os.path.join(d, name)                  # noqa: E731
+        code = np.unique(s['site'], return_inverse=True)[1]
+        fit = np.zeros(90, bool)
+        fit[np.r_[0:3, 30:90]] = True            # site 1: 3 controls, 2 in every fit
+        Y = s['Y'].astype(np.float32).astype(float).T
+        H = {}
+        for n_min in (None, '2'):
+            extra = [] if n_min is None else ['--min-scale-n', n_min]
+            comcat_mat.main([f('test.mat'), '--site', f('site.txt'), '--folds', '3',
+                             '--controls', '1:3,31:90', '--out', f(f'out/m{n_min}.mat')]
+                            + extra)
+            H[n_min] = loadmat(f(f'out/m{n_min}.mat'))['Y']
+        H2 = comcat_crossfit(Y, code, None, None, folds=3, fit=fit, min_scale_n=2).T
+        check("--min-scale-n 2 as comcat_crossfit(min_scale_n=2)",
+              np.allclose(H['2'], H2, atol=1e-6))
+        check("default 4 differs where a site has 2 subjects in the fit",
+              not np.allclose(H[None], H['2'], atol=1e-6))
+
+
 def write_v73(src, dst):
     """MATLAB v7.3 copy (HDF5 with the MATLAB header) of the numeric arrays of src."""
     import h5py

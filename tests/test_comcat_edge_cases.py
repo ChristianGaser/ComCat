@@ -134,6 +134,18 @@ def test_nonnegative_input_stays_nonnegative():
         check(f"{label}: signed input unchanged, else clipped at 0",
               np.nanmin(Hs[:-1]) < 0 and np.allclose(H[:-1], np.maximum(Hs[:-1], 0),
                                                      equal_nan=True))
+    # clip=False: the affine harmonization (negative values kept)
+    est = comcat(Y, site, Z, age, return_estimates=True)[4]
+    for label, H, Hu in (
+            ("comcat()", comcat(Y, site, Z, age)[0], comcat(Y, site, Z, age, clip=False)[0]),
+            ("comcat_from_training()",
+             comcat_from_training(Y, site, Z, age, estimates=est),
+             comcat_from_training(Y, site, Z, age, estimates=est, clip=False)),
+            ("comcat_crossfit()", comcat_crossfit(Y, site, Z, age, folds=3),
+             comcat_crossfit(Y, site, Z, age, folds=3, clip=False))):
+        check(f"{label}, clip=False: negative values kept, else the same",
+              np.nanmin(Hu) < 0 and np.allclose(H, np.maximum(Hu, 0), equal_nan=True),
+              f"min {np.nanmin(Hu):.3f}")
 
 
 if __name__ == '__main__':
