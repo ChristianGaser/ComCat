@@ -116,6 +116,26 @@ def test_crossfit_unseen_and_reference():
           np.allclose(Hr[:, 0], Y[:, 0]) and np.all(np.isfinite(Hr)))
 
 
+def test_nonnegative_input_stays_nonnegative():
+    print("Input without negative values: no negative harmonized values")
+    Y, site, Z, age = simulate()
+    Y = np.abs(0.05 * Y)                           # densities near 0, e.g. at the GM border
+    Y[0, 0], Y[-1, 0] = np.nan, 0.0
+    Ys = Y.copy()
+    Ys[-1, 0] = -1e-12                             # signed input: not clipped
+    for label, f in (
+            ("comcat()", lambda X: comcat(X, site, Z, age)[0]),
+            ("comcat_from_training()", lambda X: comcat_from_training(
+                X, site, Z, age, estimates=comcat(X, site, Z, age, return_estimates=True)[4])),
+            ("comcat_crossfit()", lambda X: comcat_crossfit(X, site, Z, age, folds=3))):
+        H, Hs = f(Y), f(Ys)
+        check(f"{label}: no negative values, NaN kept",
+              np.nanmin(H) >= 0 and np.isnan(H[0, 0]), f"min {np.nanmin(H):.3f}")
+        check(f"{label}: signed input unchanged, else clipped at 0",
+              np.nanmin(Hs[:-1]) < 0 and np.allclose(H[:-1], np.maximum(Hs[:-1], 0),
+                                                     equal_nan=True))
+
+
 if __name__ == '__main__':
     tests = [v for k, v in list(globals().items()) if k.startswith('test_')]
     for t in tests:

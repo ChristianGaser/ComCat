@@ -129,7 +129,7 @@ Y_harmonized, beta_hat, gamma_hat, delta_hat = comcat(
 
 | Value | Shape | Description |
 |---|---|---|
-| `Y_harmonized` | `(n_features, n_subjects)` | Harmonized data |
+| `Y_harmonized` | `(n_features, n_subjects)` | Harmonized data; if `Y` has no negative values (e.g. tissue densities), negative harmonized values are set to 0, also in `comcat_from_training()` |
 | `beta_hat` | `(n_params, n_features)` | Full design-matrix coefficients |
 | `gamma_hat` | `(n_batch+n_Z, n_features)` | Additive batch/nuisance effects removed from the data (empirical Bayes estimates in the site rows when `eb=True`) |
 | `delta_hat` | `(n_batch+n_Z, n_features)` | Multiplicative site effects removed from the data in the site rows (empirical Bayes estimates when `eb=True`); the nuisance rows are not applied |

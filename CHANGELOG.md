@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased (2026-11-04)
+
+### Changed — non-negative data stay non-negative
+
+- `comcat()` and `comcat_from_training()` (and with them `comcat_crossfit()`,
+  `comcat_ui.py` and `comcat_mat.py`) set negative harmonized values to 0 if the input
+  has no negative values, e.g. tissue densities. Before, location and scale corrections
+  pushed low values below 0: 0.13-0.45% of the values of six s6mwp1 gray matter test
+  samples, mostly at voxels with little gray matter, which normative models of raw data
+  turned into extreme z-scores (minimum -116 in ADNI, -17 after clipping; the controls'
+  z SD unchanged). Signed data (e.g. z-maps) are not changed; data that are signed by
+  nature but positive in the sample would be clipped too.
+
+### Added — `comcat_mat.py`
+
+- Command line for the data `Y` of BA_data2mat mat-files (v5 and v7.3), fitted on the
+  controls and cross-fitted with `comcat_crossfit()` (`--folds 0`: one model of the
+  controls for all scans), before BrainAGE or the normative models of NeuroGAMLSS. The
+  output is a copy of the mat-file with `Y` replaced. Tests: `tests/test_comcat_mat.py`.
+
 ## Unreleased (2026-11-03)
 
 ### Added — cross-sectional model for repeated scans

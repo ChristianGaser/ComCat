@@ -21,7 +21,9 @@ verbose     : bool
 
 Returns
 -------
-Y_harmonized : ndarray, shape (n_features, n_subjects)
+Y_harmonized : ndarray, shape (n_features, n_subjects); without negative values if Y
+               has none (e.g. tissue densities): they are set to 0, here and in
+               comcat_from_training()
 beta_hat     : ndarray  — full design matrix betas
 gamma_hat    : ndarray  — additive batch/nuisance effects removed from the data
                           (full feature space; empirical Bayes estimates in the
@@ -678,6 +680,7 @@ def comcat(
     if ref_level is not None:
         ref_idx = batches[ref_level]
         Y_harmonized[:, ref_idx] = Y[:, ref_idx]
+    _clip_nonnegative(Y_harmonized, Y)
 
     # --------------------------------------------------- full-space outputs
     # effects that were removed (empirical Bayes estimates with eb)
@@ -914,6 +917,14 @@ def _site_groups(site, subject) -> int:
         for s in at[1:]:
             parent[root(s)] = root(at[0])
     return len({root(s) for s in sites.tolist()})
+
+
+def _clip_nonnegative(H, Y):
+    """Set negative values of the harmonized data H to 0 (in place) if the input Y
+    has no negative values, e.g. tissue densities: harmonization keeps their range."""
+    y = Y[np.isfinite(Y)]
+    if y.size and y.min() >= 0:
+        np.maximum(H, 0, out=H)
 
 
 def _check_finite(**arrays):
@@ -1582,6 +1593,7 @@ def comcat_from_training(
         ref_idx = np.concatenate([batches_new[ref_level]])
         if len(ref_idx):
             Y_harmonized[:, ref_idx] = Y[:, ref_idx]
+    _clip_nonnegative(Y_harmonized, Y)
 
     if transp:
         Y_harmonized = Y_harmonized.T
