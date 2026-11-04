@@ -121,6 +121,10 @@ def main(argv=None):
                         "location only)")
     p.add_argument('--location-only', action='store_true', help="no scale correction of "
                    "the sites")
+    p.add_argument('--min-scale-n', type=int, default=4, metavar='N',
+                   help="sites with fewer subjects in the fit (but at least 2) are corrected "
+                        "in location only (default 4, as ComCat; 2: the scale step for every "
+                        "site, e.g. for the z-maps of NeuroGAMLSS)")
     p.add_argument('--folds', type=int, default=5, help="folds of the cross-fit (default 5); "
                    "0: no cross-fit, fitted on the controls and applied to all, the controls "
                    "in-sample (optimistic for them)")
@@ -164,12 +168,13 @@ def main(argv=None):
             return None if x is None else x[f]
         est = comcat(Y[:, f], rows(site), rows(Q), rows(P), mean_only=a.location_only,
                      subject=rows(subject) if a.within_subjects else None,
-                     return_estimates=True)[4]
+                     min_scale_n=a.min_scale_n, return_estimates=True)[4]
         H = comcat_from_training(Y, np.ones(n, dtype=int) if site is None else site, Q, P,
                                  estimates=est, unseen_batch='mean')
     else:
         H = comcat_crossfit(Y, site, Q, P, folds=a.folds, fit=fit, subject=subject,
-                            subject_terms=a.within_subjects, mean_only=a.location_only)
+                            subject_terms=a.within_subjects, mean_only=a.location_only,
+                            min_scale_n=a.min_scale_n)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     write_mat(a.mat, a.out, H, v73)
     print(f"{a.out}: {n} subjects, fitted on {n if fit is None else int(fit.sum())}, "

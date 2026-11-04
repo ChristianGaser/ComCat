@@ -18,12 +18,15 @@ nuisance    : ndarray or None, shape (n_subjects, n_nuisance)  — variables to 
 preserve    : ndarray or None, shape (n_subjects, n_preserve)  — variables to keep
 mean_only   : bool   — if True, only adjust mean (no variance scaling)
 verbose     : bool
+clip        : bool (default True) — set negative harmonized values to 0 if Y has no
+              negative values; False returns the affine harmonization, e.g. to score
+              the data by a density with the change of variables
 
 Returns
 -------
 Y_harmonized : ndarray, shape (n_features, n_subjects); without negative values if Y
                has none (e.g. tissue densities): they are set to 0, here and in
-               comcat_from_training()
+               comcat_from_training() (unless clip=False)
 beta_hat     : ndarray  — full design matrix betas
 gamma_hat    : ndarray  — additive batch/nuisance effects removed from the data
                           (full feature space; empirical Bayes estimates in the
@@ -248,6 +251,7 @@ def comcat(
     single_site_scale: bool = False,
     combat_compatible: bool = False,
     min_scale_n: int = 4,
+    clip: bool = True,
 ):
     """ComCAT harmonization for sites and nuisance parameters.
 
@@ -702,7 +706,8 @@ def comcat(
     if ref_level is not None:
         ref_idx = batches[ref_level]
         Y_harmonized[:, ref_idx] = Y[:, ref_idx]
-    _clip_nonnegative(Y_harmonized, Y)
+    if clip:
+        _clip_nonnegative(Y_harmonized, Y)
 
     # --------------------------------------------------- full-space outputs
     # effects that were removed (empirical Bayes estimates with eb)
@@ -1442,6 +1447,7 @@ def comcat_from_training(
     estimates: dict = None,
     verbose: bool = False,
     unseen_batch: str = 'error',
+    clip: bool = True,
 ) -> np.ndarray:
     """Apply pre-fitted ComCAT estimates to new data.
 
@@ -1459,6 +1465,7 @@ def comcat_from_training(
                 'mean' gives them the size-weighted mean site level and the pooled
                 variance (no site correction, nuisance effects are removed), e.g.
                 for patients of a site without controls when fitted on controls
+    clip      : as for comcat(): negative values are set to 0 if Y has none
 
     The optional extensions used in training (preserve_df, nuisance_scale,
     residual_delta) are applied with the training estimates, and so are the
@@ -1615,7 +1622,8 @@ def comcat_from_training(
         ref_idx = np.concatenate([batches_new[ref_level]])
         if len(ref_idx):
             Y_harmonized[:, ref_idx] = Y[:, ref_idx]
-    _clip_nonnegative(Y_harmonized, Y)
+    if clip:
+        _clip_nonnegative(Y_harmonized, Y)
 
     if transp:
         Y_harmonized = Y_harmonized.T
@@ -1719,7 +1727,7 @@ def comcat_crossfit(
 
     def apply(est, m):
         return comcat_from_training(Y[:, m], bvec[m], rows(Z, m), rows(P, m), estimates=est,
-                                    unseen_batch='mean')
+                                    unseen_batch='mean', clip=kwargs.get('clip', True))
 
     H = np.full(Y.shape, np.nan)
     n_unseen = 0
