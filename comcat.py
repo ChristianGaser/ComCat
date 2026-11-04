@@ -19,8 +19,11 @@ preserve    : ndarray or None, shape (n_subjects, n_preserve)  — variables to 
 mean_only   : bool   — if True, only adjust mean (no variance scaling)
 verbose     : bool
 clip        : bool (default True) — set negative harmonized values to 0 if Y has no
-              negative values; False returns the affine harmonization, e.g. to score
-              the data by a density with the change of variables
+              negative values; comcat_from_training() follows the training data (also
+              for new scans given one at a time, and signed training data are never
+              clipped), comcat_crossfit() decides on all of Y.  False returns the affine
+              harmonization, e.g. to score the data by a density with the change of
+              variables
 
 Returns
 -------
@@ -144,6 +147,7 @@ min_scale_n          : int (default 4)
                        scanner: held-out variance across scans 0.47-0.49 with the scale
                        step vs. 0.30-0.33 without; with 4 or more: 0.38 vs. 0.66).  Not
                        applied with combat_compatible=True (ComBat); 2 turns it off.
+                       Such sites keep their variance, also relative to ref_batch.
 
 Nuisance model, subjects and cross-fitting
 -------------------------------------------------------------------------------
@@ -285,6 +289,9 @@ def comcat(
                     break
         if n_subjects is None:
             # Nothing to harmonize
+            if return_estimates:
+                raise ValueError("Nothing to estimate: no batch, nuisance, preserve or "
+                                 "subject.")
             return (np.array(Y, dtype=np.float32), np.array([]),
                     np.array([]), np.array([]))
         batch = np.ones(n_subjects, dtype=int)
@@ -656,7 +663,8 @@ def comcat(
              if n_batch > 1 and not mean_only and not combat_compatible else [])
     if small:
         delta_star_masked = delta_star_masked.copy()
-        delta_star_masked[small] = 1.0
+        # no scale step: variance 1, with a reference site its variance (ratio 1 below)
+        delta_star_masked[small] = 1.0 if ref_level is None else delta_star_masked[ref_level]
         warnings.warn(f"{len(small)} site(s) with fewer than {min_scale_n} subjects are "
                       "corrected in location only (no scale step).", UserWarning, stacklevel=2)
 
@@ -706,8 +714,9 @@ def comcat(
     if ref_level is not None:
         ref_idx = batches[ref_level]
         Y_harmonized[:, ref_idx] = Y[:, ref_idx]
-    if clip:
-        _clip_nonnegative(Y_harmonized, Y)
+    nonnegative = _nonnegative(Y)
+    if clip and nonnegative:
+        np.maximum(Y_harmonized, 0, out=Y_harmonized)
 
     # --------------------------------------------------- full-space outputs
     # effects that were removed (empirical Bayes estimates with eb)
@@ -738,6 +747,7 @@ def comcat(
         'beta_hat_preserve':   beta_hat[ind_preserve, :].copy() if n_X > 0 else None,
         'ind_mask':            ind_mask,
         'ind_nan':             ind_nan,
+        'nonnegative':         nonnegative,     # input without negative values: clip
         'batch_levels':        levels_original,
         'n_batch':             n_batch,
         'n_batches':           n_batches,
@@ -946,12 +956,11 @@ def _site_groups(site, subject) -> int:
     return len({root(s) for s in sites.tolist()})
 
 
-def _clip_nonnegative(H, Y):
-    """Set negative values of the harmonized data H to 0 (in place) if the input Y
-    has no negative values, e.g. tissue densities: harmonization keeps their range."""
+def _nonnegative(Y):
+    """True if Y has no negative values (e.g. tissue densities): their harmonized
+    values are then set to 0 where negative (clip)."""
     y = Y[np.isfinite(Y)]
-    if y.size and y.min() >= 0:
-        np.maximum(H, 0, out=H)
+    return bool(y.size) and bool(y.min() >= 0)
 
 
 def _check_finite(**arrays):
@@ -1465,7 +1474,9 @@ def comcat_from_training(
                 'mean' gives them the size-weighted mean site level and the pooled
                 variance (no site correction, nuisance effects are removed), e.g.
                 for patients of a site without controls when fitted on controls
-    clip      : as for comcat(): negative values are set to 0 if Y has none
+    clip      : negative values are set to 0 if the training data had none (stored in
+                the estimates), so that new scans are treated alike, one at a time or
+                together; signed training data are never clipped
 
     The optional extensions used in training (preserve_df, nuisance_scale,
     residual_delta) are applied with the training estimates, and so are the
@@ -1622,8 +1633,11 @@ def comcat_from_training(
         ref_idx = np.concatenate([batches_new[ref_level]])
         if len(ref_idx):
             Y_harmonized[:, ref_idx] = Y[:, ref_idx]
-    if clip:
-        _clip_nonnegative(Y_harmonized, Y)
+    nonnegative = estimates.get('nonnegative')
+    if nonnegative is None:                     # estimates without the entry
+        nonnegative = _nonnegative(Y)
+    if clip and nonnegative:
+        np.maximum(Y_harmonized, 0, out=Y_harmonized)
 
     if transp:
         Y_harmonized = Y_harmonized.T
@@ -1694,6 +1708,8 @@ def comcat_crossfit(
     transp = Y.shape[1] != n
     if transp:
         Y = Y.T
+    if not _nonnegative(Y):         # clipping is decided on all data, not on each fold
+        kwargs['clip'] = False
     bvec = np.ones(n, dtype=int) if batch is None else np.asarray(batch).ravel()
     Z = None if nuisance is None else _to_col_matrix(nuisance, n)
     P = None if preserve is None else _to_col_matrix(preserve, n)

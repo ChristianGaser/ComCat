@@ -21,6 +21,7 @@ and contrastr.  Only what --preserve lists is preserved.
 """
 
 import argparse
+import io
 import os
 import shutil
 
@@ -60,7 +61,23 @@ def write_mat(src, dst, H, v73):
     from scipy.io import loadmat, savemat
     m = {k: v for k, v in loadmat(src, mat_dtype=True).items() if not k.startswith('__')}
     m['Y'] = (H.T if m['Y'].shape == H.T.shape else H).astype(m['Y'].dtype)
-    savemat(dst, m, do_compression=True)
+    savemat(dst, m, do_compression=True, long_field_names=True)
+
+
+def check_v5(src):
+    """Stop before the harmonization if the v5 file src cannot be copied by write_mat:
+    MATLAB objects such as string, table or datetime (their data sit in
+    __function_workspace__, which savemat cannot write) or function handles."""
+    from scipy.io import loadmat, savemat
+    m = loadmat(src, mat_dtype=True)
+    if '__function_workspace__' in m:
+        raise SystemExit(f"{src}: holds MATLAB objects (e.g. string, table, datetime) that "
+                         "a copy would lose; save it as v7.3 (save -v7.3).")
+    try:
+        savemat(io.BytesIO(), {k: v for k, v in m.items() if not k.startswith('__')},
+                long_field_names=True)
+    except Exception as err:
+        raise SystemExit(f"{src}: cannot be copied as v5 ({err}); save it as v7.3.")
 
 
 def read_table(path, n, cols=None):
@@ -70,18 +87,26 @@ def read_table(path, n, cols=None):
     T = np.loadtxt(path, delimiter=sep, ndmin=2)
     if len(T) != n:
         raise SystemExit(f"{path}: {len(T)} rows for {n} subjects.")
-    return T if cols is None else T[:, [int(c) - 1 for c in cols.split(',')]]
+    if cols is None:
+        return T
+    idx = [int(c) for c in cols.split(',')]
+    if not all(1 <= c <= T.shape[1] for c in idx):
+        raise SystemExit(f"{path}: columns {cols} not within 1..{T.shape[1]}.")
+    return T[:, [c - 1 for c in idx]]
 
 
 def read_labels(path, n):
-    """One label per line (site, subject or group); numbers are compared as numbers."""
-    lab = np.loadtxt(path, dtype=str, ndmin=1)
+    """One label per line (site, subject or group), taken as written (spaces and '#'
+    belong to the label; empty lines are skipped); numbers are compared as numbers."""
+    with open(path) as f:
+        lab = np.array([line.strip() for line in f if line.strip()])
     if len(lab) != n:
         raise SystemExit(f"{path}: {len(lab)} labels for {n} subjects.")
     try:
-        return lab.astype(float)
+        num = lab.astype(float)
     except ValueError:
         return lab
+    return lab if np.isnan(num).any() else num        # 'nan' is a label, not a number
 
 
 def parse_index(spec, n):
@@ -102,7 +127,8 @@ def main(argv=None):
     p.add_argument('mat', help="mat-file of BA_data2mat (v5 or v7.3) with Y, age (and male)")
     p.add_argument('--out', required=True, help="harmonized copy of the mat-file")
     p.add_argument('--site', help="site of every subject, one label per line (default: one "
-                   "site)")
+                   "site); corrected in location and scale, sites with fewer than "
+                   "--min-scale-n subjects in the fit in location only")
     p.add_argument('--nuisance', help="table of nuisance variables to remove, e.g. a CAT12 "
                    "IQM table (penalized splines)")
     p.add_argument('--nuisance-cols', help="1-based columns of --nuisance, e.g. 1,2,3,5 "
@@ -115,7 +141,8 @@ def main(argv=None):
     p.add_argument('--group', help="group of every subject (e.g. diagnosis): fit on all "
                    "subjects with the group differences preserved, instead of --controls")
     p.add_argument('--subject', help="subject of every scan (repeated scans): the scans of a "
-                   "subject stay in one fold")
+                   "subject among the controls stay in one fold (other scans are harmonized "
+                   "by the model of all controls)")
     p.add_argument('--within-subjects', action='store_true',
                    help="with --subject: effects estimated within subjects (subject terms, "
                         "location only)")
@@ -124,7 +151,7 @@ def main(argv=None):
     p.add_argument('--min-scale-n', type=int, default=4, metavar='N',
                    help="sites with fewer subjects in the fit (but at least 2) are corrected "
                         "in location only (default 4, as ComCat; 2: the scale step for every "
-                        "site, e.g. for the z-maps of NeuroGAMLSS)")
+                        "site with at least two subjects, e.g. for the z-maps of NeuroGAMLSS)")
     p.add_argument('--folds', type=int, default=5, help="folds of the cross-fit (default 5); "
                    "0: no cross-fit, fitted on the controls and applied to all, the controls "
                    "in-sample (optimistic for them)")
@@ -135,10 +162,14 @@ def main(argv=None):
         p.error("--group fits on all subjects: leave out --controls.")
     if a.within_subjects and not a.subject:
         p.error("--within-subjects needs --subject.")
-    if os.path.abspath(a.out) == os.path.abspath(a.mat):
+    if os.path.realpath(a.out) == os.path.realpath(a.mat):
         p.error("--out would overwrite the input.")
+    if a.folds < 0 or a.folds == 1:
+        p.error("--folds must be 0 (no cross-fit) or at least 2.")
 
     Y, age, male, v73 = read_mat(a.mat)
+    if not v73:
+        check_v5(a.mat)
     n = age.size
     # sites as codes 0..k-1 in the order of their labels, as in the evaluation (the
     # folds depend on how the labels are written)
