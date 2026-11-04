@@ -141,6 +141,7 @@ Y_harmonized, beta_hat, gamma_hat, delta_hat = comcat(
 | `mean_only` | `False` | Adjust mean only; skip variance scaling |
 | `eb` | `True` | Empirical Bayes estimation of the site effects, as in ComBat (used with ≥ 2 sites); `False` gives the L/S estimates (earlier versions also need `combat_compatible=True` and `nuisance_model='spline'`) |
 | `min_scale_n` | `4` | Sites with fewer subjects in the fit (but at least two) are corrected in location only: a site variance from two or three subjects adds more variance to new scans than it removes (not applied with `combat_compatible=True`, i.e. ComBat) |
+| `clip` | `True` | Set negative harmonized values to 0 if `Y` has no negative values (also in `comcat_from_training()` and `comcat_crossfit()`); `False` returns the affine harmonization, e.g. to score data by a density with the change of variables |
 | `ref_batch` | `None` | Site label to treat as reference (its data is left untouched; the other sites are harmonized to its mean and variance) |
 | `return_estimates` | `False` | Return a 5th element (dict) for use with `comcat_from_training()` |
 | `smooth_term_bounds` | `None` | Explicit boundary knots for the nuisance splines |
@@ -471,6 +472,7 @@ python comcat_mat.py s6mwp1_4mm_ABIDE437_CAT12.9.mat --site Scanner437.txt \
 | `--group FILE` | fit on all scans with the group differences kept (e.g. diagnosis), instead of `--controls` |
 | `--subject FILE`, `--within-subjects` | repeated scans: the scans of a subject stay in one fold; with `--within-subjects` the effects are estimated within subjects (location only) |
 | `--location-only`, `--folds K` | no scale correction of the sites; folds of the cross-fit (default 5; 0: no cross-fit, one model of the controls for all, the controls in-sample) |
+| `--min-scale-n N` | sites with fewer subjects in the fit (but at least 2) get no scale correction (default 4, as `min_scale_n` of `comcat()`); 2 gives the scale step for every site, which the z-maps of NeuroGAMLSS need (its site adaptation has one common scale) |
 
 Tables are text files of numbers without header, one row per scan in the order of the mat-file. Tests: `tests/test_comcat_mat.py`.
 

@@ -15,6 +15,20 @@
   empirical Bayes pooling over features does not average it out. Not applied with
   `combat_compatible=True` (ComBat); `min_scale_n=2` restores the earlier behaviour.
 
+### Added — `comcat_mat.py --min-scale-n`
+
+- `--min-scale-n N` sets `min_scale_n` (default 4). For NeuroGAMLSS z-maps use 2: their
+  site adaptation has one common scale, so the scale step of small sites matters more
+  than its noise (Buchert, held-out log density +64 with 2 vs -52 with 4, 10^-3 nat
+  relative to the adaptation alone; ADNI unchanged).
+
+### Added — `clip`
+
+- `comcat()`, `comcat_from_training()` and `comcat_crossfit()` take `clip=True`;
+  `clip=False` returns the affine harmonization without setting negative values to 0.
+  The clipped transform is not invertible at 0, so a density of the data by the change
+  of variables (NeuroGAMLSS `harmonization_comparison.py`) needs the affine one.
+
 ### Changed — non-negative data stay non-negative
 
 - `comcat()` and `comcat_from_training()` (and with them `comcat_crossfit()`,
