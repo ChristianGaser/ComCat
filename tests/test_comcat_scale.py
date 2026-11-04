@@ -213,6 +213,19 @@ def test_small_sites_location_only():
             Hf = comcat_from_training(Y, site, Z, age, estimates=est)
             check(f"{tag}: comcat_from_training applies the same", np.allclose(Hf, Yh),
                   f"max_abs={np.max(np.abs(Hf - Yh)):.1e}")
+            # with a reference site, the small site keeps its variance (its scale factor
+            # sqrt(delta_ref / delta) is 1), in comcat() and comcat_from_training()
+            ref = np.unique(site)[2]
+            Hr, *_, est = comcat(Y, site, Z, age, ref_batch=ref, return_estimates=True,
+                                 combat_compatible=cc)
+            dm = est['delta_star_masked']
+            if not cc:
+                r = dm[0] / dm[2]
+                check(f"{tag}, ref_batch: small site's variance ratio to the reference is 1",
+                      np.allclose(r, 1), f"range {r.min():.3f}-{r.max():.3f}")
+            Hf = comcat_from_training(Y, site, Z, age, estimates=est)
+            check(f"{tag}, ref_batch: comcat_from_training applies the same",
+                  np.allclose(Hf, Hr), f"max_abs={np.max(np.abs(Hf - Hr)):.1e}")
 
 
 if __name__ == '__main__':

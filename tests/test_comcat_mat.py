@@ -73,6 +73,41 @@ def test_min_scale_n():
               not np.allclose(H[None], H['2'], atol=1e-6))
 
 
+def test_labels_and_refusals():
+    with tempfile.TemporaryDirectory() as d:
+        s = simulate(d)
+        f = lambda name: os.path.join(d, name)                  # noqa: E731
+        # labels as written: spaces, '#' and 'nan' (sorted as 3, 7, 12: the same folds)
+        names = {3: 'Siemens Trio #1', 7: 'Siemens Trio #2', 12: 'nan'}
+        with open(f('names.txt'), 'w') as fh:
+            fh.write('\n'.join(names[v] for v in s['site']) + '\n\n')
+        H = {}
+        for lab in ('site.txt', 'names.txt'):
+            comcat_mat.main([f('test.mat'), '--site', f(lab), '--folds', '3',
+                             '--out', f(f'out/{lab}.mat')])
+            H[lab] = loadmat(f(f'out/{lab}.mat'))['Y']
+        check("labels with spaces, '#' and 'nan' taken as written",
+              np.allclose(H['site.txt'], H['names.txt'], atol=1e-6))
+        os.symlink(d, f('link'))
+        for label, bad in (
+                ("--nuisance-cols 0", ['--nuisance', f('iqm.txt'), '--nuisance-cols', '0']),
+                ("--folds 1", ['--site', f('site.txt'), '--folds', '1']),
+                ("--folds -3", ['--site', f('site.txt'), '--folds', '-3'])):
+            try:
+                comcat_mat.main([f('test.mat')] + bad + ['--out', f('out/x.mat')])
+                ok = False
+            except SystemExit:
+                ok = True
+            check(f"refused: {label}", ok)
+        try:
+            comcat_mat.main([f('test.mat'), '--site', f('site.txt'),
+                             '--out', os.path.join(d, 'link', 'test.mat')])
+            ok = False
+        except SystemExit:
+            ok = True
+        check("refused: --out is the input by another path", ok)
+
+
 def write_v73(src, dst):
     """MATLAB v7.3 copy (HDF5 with the MATLAB header) of the numeric arrays of src."""
     import h5py

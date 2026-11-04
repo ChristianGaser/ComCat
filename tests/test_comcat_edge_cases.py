@@ -146,6 +146,36 @@ def test_nonnegative_input_stays_nonnegative():
         check(f"{label}, clip=False: negative values kept, else the same",
               np.nanmin(Hu) < 0 and np.allclose(H, np.maximum(Hu, 0), equal_nan=True),
               f"min {np.nanmin(Hu):.3f}")
+    # the decision is made once: on all data in comcat_crossfit (one negative value in
+    # one fold means no clipping in any fold) and on the training data for new scans
+    Yn = Y.copy()
+    Yn[1, 1] = -1e-6
+    check("comcat_crossfit(): one negative input value, no fold clipped",
+          np.allclose(comcat_crossfit(Yn, site, Z, age, folds=3),
+                      comcat_crossfit(Yn, site, Z, age, folds=3, clip=False), equal_nan=True))
+    # a scan without negative input values whose harmonized values would be clipped
+    cand = np.flatnonzero(np.all(np.nan_to_num(Yn, nan=1) >= 0, axis=0))
+    Hu = comcat(Yn, site, Z, age, clip=False)[0]
+    j = cand[np.argmin(np.nanmin(Hu[:, cand], axis=0))]
+    for label, X in (("non-negative", Y), ("signed", Yn)):
+        e = comcat(X, site, Z, age, return_estimates=True)[4]
+        Hall = comcat_from_training(X, site, Z, age, estimates=e)[:, [j]]
+        Hone = comcat_from_training(X[:, [j]], site[[j]], Z[[j]], age[[j]], estimates=e)
+        check(f"comcat_from_training(), {label} training data: one scan as in the batch",
+              np.allclose(Hall, Hone, equal_nan=True) and (np.nanmin(Hone) < 0) == (X is Yn),
+              f"min {np.nanmin(Hone):.3f}")
+
+
+def test_nothing_to_estimate():
+    print("No batch, nuisance, preserve or subject: no estimates")
+    Y = np.random.default_rng(0).normal(size=(10, 20))
+    check("returned unchanged", np.allclose(comcat(Y, None)[0], Y, atol=1e-6))
+    try:
+        comcat(Y, None, return_estimates=True)
+        ok = False
+    except ValueError:
+        ok = True
+    check("return_estimates: ValueError, not a tuple without estimates", ok)
 
 
 if __name__ == '__main__':
