@@ -189,6 +189,32 @@ def test_single_subject_site():
                   f"max_abs={np.max(np.abs(Ha - Hu)):.1e}")
 
 
+def test_small_sites_location_only():
+    print("Sites with fewer than min_scale_n subjects: location only (no scale step)")
+    Y, site, Z, age, *_ = simulate([3, 4, 20], seed=6, scale_sd=0.5)
+    small = site == np.unique(site)[0]
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        for cc in (False, True):
+            tag = f"combat_compatible={cc}"
+            Yh, *_, est = comcat(Y, site, Z, age, return_estimates=True, combat_compatible=cc)
+            Y2 = comcat(Y, site, Z, age, combat_compatible=cc, min_scale_n=2)[0]
+            d = est['delta_star_masked'][:3]
+            if not cc:
+                check(f"{tag}: site variance 1 with 3 subjects, estimated with 4 and 20",
+                      np.allclose(d[0], 1) and not np.allclose(d[1], 1)
+                      and not np.allclose(d[2], 1))
+                check(f"{tag}: the other sites as without the rule",
+                      np.allclose(Yh[:, ~small], Y2[:, ~small]))
+                check(f"{tag}: the small site differs from its scale step",
+                      not np.allclose(Yh[:, small], Y2[:, small]))
+            else:
+                check(f"{tag}: ComBat unchanged", np.allclose(Yh, Y2) and not np.allclose(d[0], 1))
+            Hf = comcat_from_training(Y, site, Z, age, estimates=est)
+            check(f"{tag}: comcat_from_training applies the same", np.allclose(Hf, Yh),
+                  f"max_abs={np.max(np.abs(Hf - Yh)):.1e}")
+
+
 if __name__ == '__main__':
     tests = [v for k, v in list(globals().items()) if k.startswith('test_')]
     for t in tests:

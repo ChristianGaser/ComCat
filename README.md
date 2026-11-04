@@ -140,6 +140,7 @@ Y_harmonized, beta_hat, gamma_hat, delta_hat = comcat(
 |---|---|---|
 | `mean_only` | `False` | Adjust mean only; skip variance scaling |
 | `eb` | `True` | Empirical Bayes estimation of the site effects, as in ComBat (used with ≥ 2 sites); `False` gives the L/S estimates (earlier versions also need `combat_compatible=True` and `nuisance_model='spline'`) |
+| `min_scale_n` | `4` | Sites with fewer subjects in the fit (but at least two) are corrected in location only: a site variance from two or three subjects adds more variance to new scans than it removes (not applied with `combat_compatible=True`, i.e. ComBat) |
 | `ref_batch` | `None` | Site label to treat as reference (its data is left untouched; the other sites are harmonized to its mean and variance) |
 | `return_estimates` | `False` | Return a 5th element (dict) for use with `comcat_from_training()` |
 | `smooth_term_bounds` | `None` | Explicit boundary knots for the nuisance splines |

@@ -2,6 +2,19 @@
 
 ## Unreleased (2026-11-04)
 
+### Changed — sites with few subjects: location only
+
+- `comcat()` corrects sites with fewer than `min_scale_n` subjects in the fit (default 4,
+  at least two) in location only, without the scale step, and so do
+  `comcat_from_training()` and `comcat_crossfit()`. A site variance from two or three
+  subjects is so noisy that the scale step added more held-out variance than it removed:
+  in Buchert (116 scanners, 2-3 training scans per scanner in a 3-fold cross-fit) the
+  held-out variance across scans was 0.47-0.49 with the scale step vs. 0.30-0.33 without
+  on scanners with 2-3 training scans, and 0.38 vs. 0.66 on those with 4 or more. In
+  smoothed data the noise of these few subjects is shared across features, so the
+  empirical Bayes pooling over features does not average it out. Not applied with
+  `combat_compatible=True` (ComBat); `min_scale_n=2` restores the earlier behaviour.
+
 ### Changed — non-negative data stay non-negative
 
 - `comcat()` and `comcat_from_training()` (and with them `comcat_crossfit()`,

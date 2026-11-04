@@ -132,6 +132,15 @@ combat_compatible    : bool (default False)
                        differ only with several sites and empirical Bayes or the
                        scale step; a location-only correction without empirical
                        Bayes is the same.
+min_scale_n          : int (default 4)
+                       Sites with fewer subjects in the fit (but at least two) are
+                       corrected in location only.  A site variance from two or three
+                       subjects is so noisy that the scale step adds more variance to
+                       new scans than it removes, all the more in smoothed data, whose
+                       noise is shared across features (Buchert, 2-3 training scans per
+                       scanner: held-out variance across scans 0.47-0.49 with the scale
+                       step vs. 0.30-0.33 without; with 4 or more: 0.38 vs. 0.66).  Not
+                       applied with combat_compatible=True (ComBat); 2 turns it off.
 
 Nuisance model, subjects and cross-fitting
 -------------------------------------------------------------------------------
@@ -238,6 +247,7 @@ def comcat(
     subject=None,
     single_site_scale: bool = False,
     combat_compatible: bool = False,
+    min_scale_n: int = 4,
 ):
     """ComCAT harmonization for sites and nuisance parameters.
 
@@ -633,6 +643,18 @@ def comcat(
         delta_star_masked[single] = 1.0
         warnings.warn(f"{len(single)} site(s) with a single subject get no site correction "
                       "(only the nuisance effects are removed).", UserWarning, stacklevel=2)
+
+    # A site with only a few subjects (2 to min_scale_n - 1): its variance rests on these
+    # subjects, whose noise smoothed data share across features, so that the scale step
+    # adds more variance to new scans than it removes.  Such sites are corrected in
+    # location only (not with combat_compatible, which reproduces ComBat).
+    small = ([i for i in range(n_batch) if 2 <= n_batches[i] < min_scale_n and i != ref_level]
+             if n_batch > 1 and not mean_only and not combat_compatible else [])
+    if small:
+        delta_star_masked = delta_star_masked.copy()
+        delta_star_masked[small] = 1.0
+        warnings.warn(f"{len(small)} site(s) with fewer than {min_scale_n} subjects are "
+                      "corrected in location only (no scale step).", UserWarning, stacklevel=2)
 
     # --------------------------------------------------- adjust data
     if verbose:
