@@ -87,6 +87,7 @@ Add the repository directory to your Python path or pass it via `sys.path.insert
 |---|---|
 | `comcat.py` | Core harmonization algorithm (low-level API) |
 | `comcat_ui.py` | High-level file I/O interface + CLI entry point |
+| `comcat_mat.py` | CLI for BA_data2mat mat-files (BrainAGE, NeuroGAMLSS): fitted on controls and cross-fitted with `comcat_crossfit()` |
 | `run_comcat_from_files.py` | Example/template script for processing multiple datasets |
 | `simulate_comcat.py` | Monte-Carlo simulation comparing ComCAT vs GLM AnCova |
 | `simulate_comcat_ui.py` | Parameter sweep over simulation conditions |
@@ -447,6 +448,30 @@ comcat_meanonly_nuisance2_pspline/                # single site: location only, 
 ```
 
 Override the folder name with the `subfolder` parameter. For MAT/TXT files, the output file is placed inside the subfolder with the same file name.
+
+---
+
+## Test data before BrainAGE or normative models — `comcat_mat.py`
+
+`comcat_ui.py` fits and harmonizes in-sample. Test data that are then scored by models trained on raw data (BrainAGE, the normative models of NeuroGAMLSS) need every scan harmonized by a model that was not fitted on it, and patients harmonized by a model of the controls only. `comcat_mat.py` does this with `comcat_crossfit()` for the data `Y` of a BA_data2mat mat-file (v5 or v7.3) and writes a copy of the file with `Y` harmonized and all other fields kept:
+
+```bash
+python comcat_mat.py s6mwp1_4mm_ABIDE437_CAT12.9.mat --site Scanner437.txt \
+    --controls "$TD" --nuisance IQM437.txt --nuisance-cols 1,2,3,5 \
+    --preserve age sex TIV437.txt --folds 5 --out comcat/s6mwp1_4mm_ABIDE437_CAT12.9.mat
+```
+
+| Option | Meaning |
+|---|---|
+| `--site FILE` | site of every scan, one label per line; removed in location and scale (default: one site, nothing removed) |
+| `--nuisance FILE`, `--nuisance-cols 1,2,3,5` | nuisance variables to remove (P-splines, REML), e.g. ICR, NCR, res_ECR and contrastr of a CAT12 IQM table |
+| `--preserve age sex FILE` | effects to keep: age and sex of the mat-file and the columns of tables (e.g. TIV); only what is listed is kept |
+| `--controls 1:108,150` | fit on these scans (1-based); all others are harmonized by the model of all controls (default: all scans) |
+| `--group FILE` | fit on all scans with the group differences kept (e.g. diagnosis), instead of `--controls` |
+| `--subject FILE`, `--within-subjects` | repeated scans: the scans of a subject stay in one fold; with `--within-subjects` the effects are estimated within subjects (location only) |
+| `--location-only`, `--folds K` | no scale correction of the sites; folds of the cross-fit (default 5; 0: no cross-fit, one model of the controls for all, the controls in-sample) |
+
+Tables are text files of numbers without header, one row per scan in the order of the mat-file. Tests: `tests/test_comcat_mat.py`.
 
 ---
 
