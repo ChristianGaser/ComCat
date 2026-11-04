@@ -140,8 +140,8 @@ Y_harmonized, beta_hat, gamma_hat, delta_hat = comcat(
 |---|---|---|
 | `mean_only` | `False` | Adjust mean only; skip variance scaling |
 | `eb` | `True` | Empirical Bayes estimation of the site effects, as in ComBat (used with ≥ 2 sites); `False` gives the L/S estimates (earlier versions also need `combat_compatible=True` and `nuisance_model='spline'`) |
-| `min_scale_n` | `4` | Sites with fewer subjects in the fit (but at least two) are corrected in location only: a site variance from two or three subjects adds more variance to new scans than it removes (not applied with `combat_compatible=True`, i.e. ComBat) |
-| `clip` | `True` | Set negative harmonized values to 0 if `Y` has no negative values (also in `comcat_from_training()` and `comcat_crossfit()`); `False` returns the affine harmonization, e.g. to score data by a density with the change of variables |
+| `min_scale_n` | `4` | Sites with fewer subjects in the fit (but at least two) are corrected in location only, i.e. keep their variance (also relative to a `ref_batch`): a site variance from two or three subjects adds more variance to new scans than it removes (not applied with `combat_compatible=True`, i.e. ComBat) |
+| `clip` | `True` | Set negative harmonized values to 0 if `Y` has no negative values; `comcat_from_training()` follows the training data (new scans one at a time or together alike; signed training data are never clipped), `comcat_crossfit()` decides on all of `Y`; `False` returns the affine harmonization, e.g. to score data by a density with the change of variables |
 | `ref_batch` | `None` | Site label to treat as reference (its data is left untouched; the other sites are harmonized to its mean and variance) |
 | `return_estimates` | `False` | Return a 5th element (dict) for use with `comcat_from_training()` |
 | `smooth_term_bounds` | `None` | Explicit boundary knots for the nuisance splines |
@@ -465,16 +465,16 @@ python comcat_mat.py s6mwp1_4mm_ABIDE437_CAT12.9.mat --site Scanner437.txt \
 
 | Option | Meaning |
 |---|---|
-| `--site FILE` | site of every scan, one label per line; removed in location and scale (default: one site, nothing removed) |
+| `--site FILE` | site of every scan, one label per line, taken as written; removed in location and scale, sites with fewer than `--min-scale-n` subjects in the fit in location only (default: one site, nothing removed) |
 | `--nuisance FILE`, `--nuisance-cols 1,2,3,5` | nuisance variables to remove (P-splines, REML), e.g. ICR, NCR, res_ECR and contrastr of a CAT12 IQM table |
 | `--preserve age sex FILE` | effects to keep: age and sex of the mat-file and the columns of tables (e.g. TIV); only what is listed is kept |
 | `--controls 1:108,150` | fit on these scans (1-based); all others are harmonized by the model of all controls (default: all scans) |
 | `--group FILE` | fit on all scans with the group differences kept (e.g. diagnosis), instead of `--controls` |
-| `--subject FILE`, `--within-subjects` | repeated scans: the scans of a subject stay in one fold; with `--within-subjects` the effects are estimated within subjects (location only) |
+| `--subject FILE`, `--within-subjects` | repeated scans: the scans of a subject among the controls stay in one fold (other scans get the model of all controls); with `--within-subjects` the effects are estimated within subjects (location only) |
 | `--location-only`, `--folds K` | no scale correction of the sites; folds of the cross-fit (default 5; 0: no cross-fit, one model of the controls for all, the controls in-sample) |
-| `--min-scale-n N` | sites with fewer subjects in the fit (but at least 2) get no scale correction (default 4, as `min_scale_n` of `comcat()`); 2 gives the scale step for every site, which the z-maps of NeuroGAMLSS need (its site adaptation has one common scale) |
+| `--min-scale-n N` | sites with fewer subjects in the fit (but at least 2) get no scale correction (default 4, as `min_scale_n` of `comcat()`); 2 gives the scale step for every site with at least two subjects, which the z-maps of NeuroGAMLSS need (its site adaptation has one common scale) |
 
-Tables are text files of numbers without header, one row per scan in the order of the mat-file. Tests: `tests/test_comcat_mat.py`.
+Tables are text files of numbers without header, one row per scan in the order of the mat-file. `--folds` is 0 or at least 2. v5 mat-files with MATLAB objects (string, table, datetime) or function handles are refused before the harmonization, as the copy would lose them: save them as v7.3. Missing values in `Y`: cross-fitted, a feature with a missing value is missing for all scans (as in `comcat_crossfit()`); with `--folds 0`, only the missing entries. Tests: `tests/test_comcat_mat.py`.
 
 ---
 

@@ -2,6 +2,23 @@
 
 ## Unreleased (2026-11-04)
 
+### Fixed — review of the changes of 2026-11-04
+
+- Clipping is decided once: `comcat_from_training()` follows the training data (stored
+  in the estimates as `nonnegative`), so a new scan alone is harmonized as in a batch and
+  signed training data (e.g. z-scores, brain-age gaps) are never clipped;
+  `comcat_crossfit()` decides on all of `Y`. Before, the rule was checked on the data of
+  every call, i.e. per fold and per batch of new scans.
+- `min_scale_n` with `ref_batch`: the small sites keep their variance (variance set to
+  the reference's, ratio 1); before, they were scaled by sqrt(delta_ref) of the reference
+  relative to the pooled variance.
+- `comcat(..., return_estimates=True)` with nothing to estimate (no batch, nuisance,
+  preserve or subject) raises a ValueError instead of returning four elements.
+- `comcat_mat.py`: labels are read as written (`#`, spaces and `nan` belong to them);
+  `--nuisance-cols` and `--folds` (0 or at least 2) are checked; `--out` is compared with
+  the input by its real path; v5 files with MATLAB objects or function handles are
+  refused before the harmonization, and long struct field names are written.
+
 ### Changed — sites with few subjects: location only
 
 - `comcat()` corrects sites with fewer than `min_scale_n` subjects in the fit (default 4,
