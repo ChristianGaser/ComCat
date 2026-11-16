@@ -135,29 +135,16 @@ def _build_subfolder(
     n_nuisance: int,
     n_preserve: int,
     mean_only: bool,
-    gam_df: int | None = None,
     preserve_df: int | None = None,
-    nuisance_scale: bool = False,
-    residual_delta: bool = False,
-    eb: bool = False,
     nuisance_model: str = 'pspline',
-    df_consistent: bool = False,
 ) -> str:
-    """Folder name encoding the settings.  Without empirical Bayes and the
-    optional extensions, the names are those of earlier versions; empirical
-    Bayes adds '_eb' after '_sites', so its results never replace them, and the
-    df-consistent site variances (default of comcat() since 2026-11; not with
-    combat_compatible) add '_dfc' after it."""
-    if n_sites > 1 and n_nuisance == 0:
-        sf = 'combat'
-    else:
-        sf = 'comcat'
+    """Folder name of the harmonized data: what was removed and preserved, e.g.
+    comcat_sites_eb_preserve2_nuisance4_pspline.  '_eb' after '_sites' is kept from
+    earlier versions, so that the folders of versions without empirical Bayes are not
+    overwritten."""
+    sf = 'combat' if (n_sites > 1 and n_nuisance == 0) else 'comcat'
     if n_sites > 1:
-        sf += f'_sites'
-        if eb:
-            sf += '_eb'
-        if df_consistent:
-            sf += '_dfc'
+        sf += '_sites_eb'
     if n_preserve > 0:
         sf += f'_preserve{n_preserve}'
         if preserve_df is not None:
@@ -165,12 +152,7 @@ def _build_subfolder(
     if mean_only:
         sf += '_meanonly'
     if n_nuisance > 0:
-        sf += (f'_nuisance{n_nuisance}_gam{gam_df}' if nuisance_model == 'spline'
-               else f'_nuisance{n_nuisance}_{nuisance_model}')
-        if nuisance_scale:
-            sf += '_scale'                 # implies residual site variances
-        elif residual_delta and not mean_only and not df_consistent:
-            sf += '_resdelta'              # implied by df_consistent
+        sf += f'_nuisance{n_nuisance}_{nuisance_model}'
     return sf
 
 
@@ -192,70 +174,40 @@ def comcat_ui(
     subfolder: str | None = None,
     save_estimates: bool = False,
     verbose: bool = True,
-    smooth_term_bounds=None,
-    gam_df: int | None = None,
     preserve_df: int | str | None = None,
     preserve_bounds=None,
-    nuisance_scale: bool = False,
-    residual_delta: bool = False,
-    eb: bool = True,
     nuisance_model: str = 'pspline',
-    nuisance_penalty=None,
-    single_site_scale: bool = False,
-    combat_compatible: bool = False,
+    **removed,
 ):
     """
     Run ComCAT on a list of image/data files and save harmonized results.
 
-    Every nuisance column is modelled as a penalized B-spline by default.
+    The data are harmonized in-sample: the model is fitted on the files it is applied
+    to.  For data that are then scored by a model trained elsewhere (BrainAGE,
+    normative models), use comcat_mat.py or comcat_crossfit(), which cross-fit.
 
     Parameters
     ----------
     files         : list of file paths (NIfTI, GIFTI, MAT, or TXT/CSV)
                     For MAT/TXT, only a single file is supported (contains all subjects).
     batch         : 1-D array of site labels per subject (None → single site)
-    nuisance      : 2-D array (n_subjects × n_nuisance) to remove
+    nuisance      : 2-D array (n_subjects × n_nuisance) to remove (location only;
+                    penalized B-splines with the smoothness estimated by REML)
     preserve      : 2-D array (n_subjects × n_preserve) to keep
-    mean_only     : adjust mean only (no variance scaling)
+    mean_only     : correct the sites in location only (no variance scaling); one site
+                    is always corrected in location only
     subfolder     : override auto-generated subfolder name
-    save_estimates: save gamma/delta LS estimates alongside data
+    save_estimates: save the gamma/delta estimates that were applied alongside the data
     verbose       : print progress
-    smooth_term_bounds : boundary knots; None infers from data (fine for single-dataset use).
-    gam_df        : B-spline basis dimension per nuisance column.
-                    None (default) — set by comcat(): 10 for 'pspline', otherwise
-                    auto-selected from sample size: min(10, max(5, n//30)).
-    eb            : empirical Bayes estimation of the site effects, as in ComBat
-                    (default True; used with at least two sites).  Folder suffix
-                    '_eb' after '_sites'; eb=False with combat_compatible=True and
-                    nuisance_model='spline' reproduces earlier results and folder
-                    names.  With save_estimates, the saved gamma/delta are
-                    the empirical Bayes estimates that were applied.
-
-    Optional extensions (off by default; see comcat.py for details)
-    preserve_df   : B-spline df for continuous preserve covariates; 'same' = gam_df.
-                    Output folder gets '_preserve<n>_gam<df>'.
+    preserve_df   : B-spline df for continuous preserve covariates ('same' = 10), for
+                    wide age ranges.  Output folder gets '_preserve<n>_gam<df>'.
     preserve_bounds : boundary knots for the preserve splines (per preserve column).
-    nuisance_scale: also remove nuisance-dependent variance.  Folder suffix '_scale'.
-                    With save_estimates, the per-feature likelihood-ratio test of
-                    nuisance effects on the variance is saved as scale_lr / scale_p,
-                    with the residual kurtosis used for its studentization
-                    (scale_kurtosis).
-    residual_delta: with combat_compatible, estimate site variances after removing
-                    nuisance effects (as in ComBat).  Folder suffix '_resdelta'.
-                    Without combat_compatible, the site variances always come from
-                    the residuals.
-    nuisance_model: 'pspline' (default, penalized B-splines, see comcat.py), 'linear'
-                    or 'spline' (unpenalized B-splines of earlier versions).  Folder
-                    suffix '_pspline' or '_linear'; '_gam<df>' for 'spline'.
-    nuisance_penalty: smoothing parameter of 'pspline' (None/'reml', 'gcv' or a number).
-    single_site_scale: with one site (no batch), apply the variance step as earlier
-                    versions did.  Default False: one site is corrected for location
-                    only, and the folder name gets '_meanonly'.
-    combat_compatible: site variances and their empirical Bayes posteriors as in
-                    ComBat and earlier versions (see comcat.py).  Default False:
-                    df-consistent site variances, which do not shrink the residuals
-                    of small sites; with several sites (and empirical Bayes or the
-                    scale step) the folder name then gets '_dfc'.
+    nuisance_model: 'pspline' (default) or 'linear'.  Folder suffix '_pspline' or
+                    '_linear'.
+
+    The site effects are estimated as in ComBat (empirical Bayes; see comcat.py).
+    Options of earlier versions are passed on to comcat(), which accepts them only
+    when they describe this version.
     """
     if not files:
         raise ValueError("No input files provided.")
@@ -338,29 +290,16 @@ def comcat_ui(
     Y_adj, beta_hat, gamma_hat, delta_hat, estimates = comcat(
         Y, batch_coded, nuisance, preserve,
         mean_only=mean_only, verbose=verbose,
-        smooth_term_bounds=smooth_term_bounds,
-        gam_df=gam_df,
         preserve_df=preserve_df,
         preserve_bounds=preserve_bounds,
-        nuisance_scale=nuisance_scale,
-        residual_delta=residual_delta,
-        eb=eb,
         nuisance_model=nuisance_model,
-        nuisance_penalty=nuisance_penalty,
-        single_site_scale=single_site_scale,
-        combat_compatible=combat_compatible,
         return_estimates=True,
+        **removed,
     )
-    # gam_df as resolved by comcat(), so that folder name and log mat agree with it
-    gam_df = estimates['gam_df']
     if preserve_df == 'same':
-        preserve_df = gam_df
-    nuisance_scale = estimates['nuisance_scale'] is not None   # False without nuisance
-    eb = estimates['eb']                                       # False with a single site
+        preserve_df = estimates['preserve_splines']['df'] if estimates['preserve_splines'] else None
     mean_only = estimates['mean_only']                         # True with a single site
-    options = dict(preserve_df=preserve_df, nuisance_scale=nuisance_scale,
-                   residual_delta=residual_delta, eb=eb, nuisance_model=nuisance_model,
-                   df_consistent=estimates.get('site_df') is not None)
+    options = dict(preserve_df=preserve_df, nuisance_model=nuisance_model)
 
     # guard against extreme variance changes (factor > 10)
     sd0 = np.std(Y, axis=1, ddof=1) if Y.ndim == 2 else np.std(Y, axis=0, ddof=1)
@@ -377,8 +316,7 @@ def comcat_ui(
     # --------------------------------------------------------- subfolder / path
     if subfolder is None:
         subfolder = _build_subfolder(
-            n_sites, n_nuisance_cols, n_preserve_cols, mean_only, gam_df=gam_df,
-            **options,
+            n_sites, n_nuisance_cols, n_preserve_cols, mean_only, **options,
         )
 
     pth = str(Path(files[0]).parent)
@@ -400,12 +338,8 @@ def comcat_ui(
                 filetype == 'gifti'
             )
 
-        if save_estimates and nuisance_scale:
-            _save_scale_test(estimates, str(Path(pth) / subfolder), filetype,
-                             meta[0], verbose)
-
         # save log mat
-        _save_log_mat(pth, subfolder, batch, nuisance, preserve, gam_df, **options)
+        _save_log_mat(pth, subfolder, batch, nuisance, preserve, mean_only, **options)
 
     elif filetype == 'mat':
         out_dir = Path(pth) / subfolder
@@ -432,10 +366,7 @@ def comcat_ui(
                 if verbose:
                     print(f"Saved {dname} (multiplicative effects)")
 
-        if save_estimates and nuisance_scale:
-            _save_scale_test(estimates, str(out_dir), filetype, None, verbose)
-
-        _save_log_mat(str(out_dir), subfolder, batch, nuisance, preserve, gam_df,
+        _save_log_mat(str(out_dir), subfolder, batch, nuisance, preserve, mean_only,
                       **options)
 
     else:  # txt / csv
@@ -458,10 +389,7 @@ def comcat_ui(
                 dname = out_dir / f"delta{i+1:02d}{ext}"
                 np.savetxt(str(dname), delta_hat[i, :][None, :], fmt='%g')
 
-        if save_estimates and nuisance_scale:
-            _save_scale_test(estimates, str(out_dir), filetype, None, verbose)
-
-        _save_log_mat(str(out_dir), subfolder, batch, nuisance, preserve, gam_df,
+        _save_log_mat(str(out_dir), subfolder, batch, nuisance, preserve, mean_only,
                       **options)
 
     if verbose:
@@ -499,53 +427,20 @@ def _save_estimates_nifti(gamma_hat, delta_hat, pth, ref_img, is_gifti: bool):
         nib.save(img, fname)
 
 
-def _save_scale_test(estimates, out_dir, filetype, ref_img, verbose):
-    """Save the likelihood-ratio test of nuisance effects on the variance
-    (nuisance_scale option): scale_lr = studentized LR statistic,
-    scale_p = p-value of scale_lr / df1 under F(df1, df2) with
-    df1 = estimates['scale_lr_df'] and df2 = estimates['scale_resid_df'],
-    scale_kurtosis = residual kurtosis used for the studentization."""
-    import nibabel as nib
-    for key in ('scale_lr', 'scale_p', 'scale_kurtosis'):
-        arr = estimates[key]
-        if filetype == 'nifti':
-            fname = os.path.join(out_dir, f"{key}.nii.gz")
-            nib.save(ref_img.__class__(arr.reshape(ref_img.shape).astype(np.float32),
-                                       ref_img.affine, ref_img.header), fname)
-        elif filetype == 'gifti':
-            import nibabel.gifti as ngi
-            fname = os.path.join(out_dir, f"{key}.gii")
-            nib.save(ngi.GiftiImage(darrays=[ngi.GiftiDataArray(arr.astype(np.float32))]),
-                     fname)
-        else:
-            fname = os.path.join(out_dir, f"{key}.txt")
-            np.savetxt(fname, arr[None, :], fmt='%g')
-        if verbose:
-            print(f"Saved {fname}")
-    if verbose:
-        frac = np.nanmean(estimates['scale_p'] < 0.05)
-        print(f"Nuisance effect on variance: p < 0.05 (uncorrected) in "
-              f"{100 * frac:.1f}% of features (studentized LR, "
-              f"F({estimates['scale_lr_df']}, {estimates['scale_resid_df']}))")
-
-
-def _save_log_mat(pth, subfolder, batch, nuisance, preserve, gam_df=6,
-                  preserve_df=None, nuisance_scale=False, residual_delta=False,
-                  eb=False, nuisance_model='pspline', df_consistent=False):
-    """Save a .mat log file with ComCAT parameters (mirrors MATLAB behaviour)."""
+def _save_log_mat(pth, subfolder, batch, nuisance, preserve, mean_only=False,
+                  preserve_df=None, nuisance_model='pspline'):
+    """Save a .mat log file with the ComCAT inputs and settings."""
     try:
         from scipy.io import savemat
         log = {
             'batch':      np.array(batch),
             'nuisance':   np.array(nuisance),
             'preserve':   np.array(preserve),
-            'gam_df':     int(gam_df),
+            'mean_only':      int(mean_only),
             'preserve_df':    -1 if preserve_df is None else int(preserve_df),
-            'nuisance_scale': int(nuisance_scale),
-            'residual_delta': int(residual_delta or nuisance_scale),
-            'eb':             int(eb),
             'nuisance_model': nuisance_model,
-            'df_consistent':  int(df_consistent),
+            'eb':             int(len(np.unique(batch)) > 1),
+            'model':          'ComBat site model, nuisance in location (2026-11-16)',
         }
         savemat(os.path.join(pth, subfolder + '.mat'), {'Comcat': log})
     except ImportError:
@@ -575,34 +470,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help='Path to a text file with covariates to preserve (n_subjects × n_covariates).',
     )
     p.add_argument('--mean-only', action='store_true',
-                   help='Adjust mean only (no variance scaling).')
-    p.add_argument('--gam-df', type=int, default=None, metavar='N',
-                   help='B-spline basis dimension per nuisance term (default: 10 with '
-                        'pspline; 6 with spline, as earlier versions).')
+                   help='Correct the sites in location only (no variance scaling).')
     p.add_argument('--preserve-df', default=None, metavar='N|same',
                    help='B-spline df for continuous preserve covariates '
-                        "('same' = gam-df; default: linear).")
-    p.add_argument('--nuisance-scale', action='store_true',
-                   help='Also remove nuisance-dependent variance.')
-    p.add_argument('--residual-delta', action='store_true',
-                   help='With --combat-compatible: estimate site variances after '
-                        'removing nuisance effects (always done otherwise).')
-    p.add_argument('--nuisance-model', choices=['pspline', 'linear', 'spline'],
-                   default='pspline',
+                        "('same' = 10; default: linear).")
+    p.add_argument('--nuisance-model', choices=['pspline', 'linear'], default='pspline',
                    help="Nuisance model: penalized B-splines with the smoothing parameter "
-                        "estimated by REML (default), linear terms, or the unpenalized "
-                        "B-splines of earlier versions.")
-    p.add_argument('--single-site-scale', action='store_true',
-                   help='With one site, apply the variance step as earlier versions '
-                        '(default: location correction only).')
-    p.add_argument('--combat-compatible', action='store_true',
-                   help='Site variances and their empirical Bayes posteriors as in ComBat '
-                        'and earlier versions (default: df-consistent site variances, '
-                        'which do not shrink the residuals of small sites).')
-    p.add_argument('--no-eb', action='store_true',
-                   help='Disable empirical Bayes estimation of the site effects '
-                        '(L/S estimates; earlier versions also need '
-                        '--combat-compatible and --nuisance-model spline).')
+                        "estimated by REML (default), or linear terms.")
     p.add_argument('--subfolder', default=None,
                    help='Override auto-generated output subfolder name.')
     p.add_argument('--save-estimates', action='store_true',
@@ -628,16 +502,9 @@ def main(argv=None):
         subfolder=args.subfolder,
         save_estimates=args.save_estimates,
         verbose=not args.quiet,
-        gam_df=(6 if args.gam_df is None and args.nuisance_model == 'spline'
-                else args.gam_df),
         preserve_df=(args.preserve_df if args.preserve_df in (None, 'same')
                      else int(args.preserve_df)),
-        nuisance_scale=args.nuisance_scale,
-        residual_delta=args.residual_delta,
-        eb=not args.no_eb,
         nuisance_model=args.nuisance_model,
-        single_site_scale=args.single_site_scale,
-        combat_compatible=args.combat_compatible,
     )
 
 

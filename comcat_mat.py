@@ -4,20 +4,24 @@ the normative models of NeuroGAMLSS.
 
 Removes site effects and nuisance effects (e.g. image quality) from the test data,
 which are then scored by models trained on raw data.  Every subject is harmonized by
-a model that was not fitted on it (comcat_crossfit): the subjects to fit on
-(--controls, default all) are split into --folds folds, stratified by site; every
-fold is harmonized by the model of the other folds, all other subjects (e.g.
-patients) by the model of all controls.  --folds 0 skips the cross-fit: one model of
-the controls for all subjects, the controls in-sample (optimistic for them).  The
-output is a copy of the mat-file with Y harmonized and all other fields kept.
+a model that was not fitted on it (comcat_crossfit): the subjects are split into
+--folds folds, stratified by site, and every fold is harmonized by the model of the
+other folds.  --folds 0 skips the cross-fit (in-sample, optimistic).  The output is a
+copy of the mat-file with Y harmonized and all other fields kept.
+
+One design for all samples: sites (--site) and image quality (--nuisance) removed, age,
+sex and the diagnosis (--group) preserved, fitted on all subjects:
 
     python comcat_mat.py s6mwp1_4mm_ABIDE437_CAT12.9.mat --site Scanner437.txt \\
-        --controls "$TD" --nuisance IQM437.txt --nuisance-cols 1,2,3,5 \\
+        --nuisance IQM437.txt --nuisance-cols 1,2,3,5 --group DX_group437.txt \\
         --preserve age sex TIV437.txt --out comcat/s6mwp1_4mm_ABIDE437_CAT12.9.mat
 
-Tables are text files of numbers without header, one row per subject in the order
-of the mat-file; columns 1, 2, 3 and 5 of a CAT12 IQM table are ICR, NCR, res_ECR
-and contrastr.  Only what --preserve lists is preserved.
+--controls fits on the controls only instead and applies their model to all other
+subjects (a sensitivity analysis: it corrects the sites of the patients less well and
+needs enough controls at every site).  Tables are text files of numbers without header,
+one row per subject in the order of the mat-file; columns 1, 2, 3 and 5 of a CAT12 IQM
+table are ICR, NCR, res_ECR and contrastr.  Only what --preserve lists is preserved.
+Use the image quality measures only with about 70 subjects or more in the fit.
 """
 
 import argparse
@@ -127,8 +131,7 @@ def main(argv=None):
     p.add_argument('mat', help="mat-file of BA_data2mat (v5 or v7.3) with Y, age (and male)")
     p.add_argument('--out', required=True, help="harmonized copy of the mat-file")
     p.add_argument('--site', help="site of every subject, one label per line (default: one "
-                   "site); corrected in location and scale, sites with fewer than "
-                   "--min-scale-n subjects in the fit in location only")
+                   "site); corrected in location and scale as in ComBat (empirical Bayes)")
     p.add_argument('--nuisance', help="table of nuisance variables to remove, e.g. a CAT12 "
                    "IQM table (penalized splines)")
     p.add_argument('--nuisance-cols', help="1-based columns of --nuisance, e.g. 1,2,3,5 "
@@ -136,10 +139,10 @@ def main(argv=None):
     p.add_argument('--preserve', nargs='+', default=[], metavar='ITEM',
                    help="effects to keep: age and sex of the mat-file and tables (all their "
                         "columns), e.g. 'age sex TIV.txt' (default: nothing)")
-    p.add_argument('--controls', help="1-based indices of the subjects to fit on, e.g. "
-                   "1:108,150 (default: all)")
-    p.add_argument('--group', help="group of every subject (e.g. diagnosis): fit on all "
-                   "subjects with the group differences preserved, instead of --controls")
+    p.add_argument('--group', help="group of every subject (e.g. diagnosis), one label per "
+                   "line: the group differences are preserved (fitted on all subjects)")
+    p.add_argument('--controls', help="instead of --group: 1-based indices of the subjects "
+                   "to fit on, e.g. 1:108,150; all others get the model of all controls")
     p.add_argument('--subject', help="subject of every scan (repeated scans): the scans of a "
                    "subject among the controls stay in one fold (other scans are harmonized "
                    "by the model of all controls)")
@@ -148,10 +151,7 @@ def main(argv=None):
                         "location only)")
     p.add_argument('--location-only', action='store_true', help="no scale correction of "
                    "the sites")
-    p.add_argument('--min-scale-n', type=int, default=4, metavar='N',
-                   help="sites with fewer subjects in the fit (but at least 2) are corrected "
-                        "in location only (default 4, as ComCat; 2: the scale step for every "
-                        "site with at least two subjects, e.g. for the z-maps of NeuroGAMLSS)")
+    p.add_argument('--min-scale-n', type=int, default=None, help=argparse.SUPPRESS)
     p.add_argument('--folds', type=int, default=5, help="folds of the cross-fit (default 5); "
                    "0: no cross-fit, fitted on the controls and applied to all, the controls "
                    "in-sample (optimistic for them)")
@@ -166,6 +166,10 @@ def main(argv=None):
         p.error("--out would overwrite the input.")
     if a.folds < 0 or a.folds == 1:
         p.error("--folds must be 0 (no cross-fit) or at least 2.")
+    if a.min_scale_n not in (None, 2):
+        p.error("--min-scale-n was removed: every site with at least two subjects in the fit "
+                "is corrected in location and scale, as in ComBat (--min-scale-n 2 of earlier "
+                "versions); --location-only skips the scale step for all sites.")
 
     Y, age, male, v73 = read_mat(a.mat)
     if not v73:
@@ -199,13 +203,12 @@ def main(argv=None):
             return None if x is None else x[f]
         est = comcat(Y[:, f], rows(site), rows(Q), rows(P), mean_only=a.location_only,
                      subject=rows(subject) if a.within_subjects else None,
-                     min_scale_n=a.min_scale_n, return_estimates=True)[4]
+                     return_estimates=True)[4]
         H = comcat_from_training(Y, np.ones(n, dtype=int) if site is None else site, Q, P,
                                  estimates=est, unseen_batch='mean')
     else:
         H = comcat_crossfit(Y, site, Q, P, folds=a.folds, fit=fit, subject=subject,
-                            subject_terms=a.within_subjects, mean_only=a.location_only,
-                            min_scale_n=a.min_scale_n)
+                            subject_terms=a.within_subjects, mean_only=a.location_only)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     write_mat(a.mat, a.out, H, v73)
     print(f"{a.out}: {n} subjects, fitted on {n if fit is None else int(fit.sum())}, "

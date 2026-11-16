@@ -1,8 +1,11 @@
 """
 Decentralized ComCAT (Mode A: shared unique covariate values) — GAM B-spline path.
 
-Reproduces a centralized `comcat()` run across sites that never pool their raw
-imaging data `Y`.  Only aggregate statistics leave a site:
+Reproduces a centralized run of the earlier ComCAT (evaluation/comcat_legacy.py:
+unpenalized B-splines, ComBat's site variances before the nuisance effects are removed)
+across sites that never pool their raw imaging data `Y`.  It does not implement the
+current comcat() (penalized splines, site variances from the residuals), except
+without nuisance covariates, where both are ComBat.  Only aggregate statistics leave a site:
   - feature first/second moments (for the common mask)
   - the *unique values* of each smooth covariate column (for B-spline knots)
   - design-matrix Gram blocks  X_iᵀX_i  and cross terms  X_iᵀY_i
@@ -10,7 +13,7 @@ imaging data `Y`.  Only aggregate statistics leave a site:
 
 Design notes
 ------------
-* comcat.py is NOT modified.  Equivalence is achieved purely by constructing
+* The centralized code is NOT modified.  Equivalence is achieved purely by constructing
   `statsmodels` BSplines objects with *injected* knots and handing them to the
   existing `spline_constructors` hook that `comcat_from_training` already honours.
 * The B-spline basis is reproduced **bitwise** (knot vector is reconstructed
@@ -21,24 +24,28 @@ Design notes
 * Assumes the federated topology of Bostami et al.: **each site holds exactly one
   batch** (so per-batch variance is computed locally).  Nuisance terms use GAM
   B-splines (smooth columns) or plain linear terms (the rest).
-* Empirical Bayes (eb=True, the default of comcat()) runs on the aggregator: it
+* Empirical Bayes (eb=True) runs on the aggregator: it
   needs only the site effects gamma, the per-batch variances and the site sizes,
   which the protocol already exchanges.
 * The site variances are those of ComBat, i.e. this reproduces
-  comcat(..., combat_compatible=True).  The df-consistent site variances of the
-  default would also need the leverages of every site's subjects, which a site can
-  compute from the aggregated Gram matrix; not implemented.
+  comcat_legacy.comcat(..., nuisance_model='spline', combat_compatible=True).
 
 See tests/DECENTRALIZED-GAM-DESIGN.md for the full design.
 """
 
 from __future__ import annotations
 
+import os
+import sys
+
+# the earlier ComCAT (unpenalized B-splines, eb=False): evaluation/comcat_legacy.py
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'evaluation'))
+
 import numpy as np
 from numpy.linalg import pinv
 from statsmodels.gam.api import BSplines
 
-from comcat import comcat_from_training, _eb_site_effects, _to_col_matrix
+from comcat_legacy import comcat_from_training, _eb_site_effects, _to_col_matrix
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +334,7 @@ def decentralized_harmonize(site_Y, site_batch_idx, site_nuisance, site_preserve
 # ---------------------------------------------------------------------------
 
 def main():
-    from comcat import comcat
+    from comcat_legacy import comcat
 
     rng = np.random.default_rng(7)
     n_features = 180
@@ -375,7 +382,7 @@ def main():
             Y_dec[:, ix] = out[k]
 
         # --- bitwise check of the GAM basis itself ----------------------------
-        from comcat import _build_nuisance_basis
+        from comcat_legacy import _build_nuisance_basis
         central_basis, _ = _build_nuisance_basis(age[:, None], None,
                                                  est['gam_df'], False)
         dec_basis = est['spline_constructors'][0].transform(age[:, None])
