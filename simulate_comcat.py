@@ -164,8 +164,11 @@ def simulate_comcat(
     avgD : (2,) ndarray  — mean Cohen's D for [AnCova, ComCAT (GAM)]
     FPR  : (2,) ndarray  — false-positive rate at alpha=0.05
     """
-    # lazy import so this module is usable without comcat installed
-    from comcat import comcat as _comcat
+    # the simulations were run with the unpenalized B-splines of the earlier ComCAT
+    import os
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'evaluation'))
+    from comcat_legacy import comcat as _comcat
 
     # ---- amplitude defaults ------------------------------------------------
     a1_def, a2_def, a3_def, a4_def = 1.0, 0.2, 0.0, 0.5

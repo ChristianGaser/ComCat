@@ -163,29 +163,11 @@ NUISANCE_FILE = SAMPLES[SAMPLE]["nuisance_file"]
 PRESERVE_FILE = SAMPLES[SAMPLE]["preserve_file"]
 
 # ComCAT options
-MEAN_ONLY    = False   # True → adjust mean only, skip variance scaling
-GAM_DF       = None    # B-spline df per nuisance column; None = auto: 10 for
-                       # 'pspline', else min(10, max(5, n//30)); set an int to override
+MEAN_ONLY    = False   # True → correct the sites in location only (no variance scaling)
 SAVE_ESTIMATES = False # save additive (gamma) and multiplicative (delta) estimates
-EB           = True    # empirical Bayes estimation of the site effects (as ComBat);
-                       # False reproduces earlier results (output folder without '_eb')
-
-# Optional model extensions (see README "Optional model extensions");
-# the defaults reproduce the original ComCAT results
-PRESERVE_DF    = None  # B-spline df for continuous preserve covariates:
-                       # None = linear, 'same' = GAM_DF, or an int
-NUISANCE_SCALE = False # also remove nuisance-dependent variance (heteroscedasticity);
-                       # with SAVE_ESTIMATES the per-feature test is saved
-                       # (scale_lr/scale_p/scale_kurtosis)
-RESIDUAL_DELTA = False # with COMBAT_COMPATIBLE: estimate site variances after removing
-                       # nuisance effects (as ComBat); always done otherwise
-NUISANCE_MODEL = 'pspline' # 'pspline' (penalized B-splines, smoothing by REML),
-                       # 'linear', or 'spline' (unpenalized B-splines, earlier versions)
-SINGLE_SITE_SCALE = False  # one site: True applies the variance step of earlier
-                       # versions; False corrects the location only
-COMBAT_COMPATIBLE = False  # True: site variances and their EB posteriors as ComBat and
-                       # earlier versions; False: df-consistent site variances, which
-                       # do not shrink the residuals of small sites (folder '_dfc')
+PRESERVE_DF    = None  # B-spline df for continuous preserve covariates (wide age
+                       # ranges): None = linear, 'same' = 10, or an int
+NUISANCE_MODEL = 'pspline' # 'pspline' (penalized B-splines, smoothing by REML) or 'linear'
 
 # ---------------------------------------------------------------------------
 # Load covariates from text files
@@ -229,16 +211,10 @@ for mat_file in MAT_FILES:
         nuisance       = nuisance,
         preserve       = preserve,
         mean_only      = MEAN_ONLY,
-        gam_df         = GAM_DF,
         save_estimates = SAVE_ESTIMATES,
         verbose        = True,
         preserve_df    = PRESERVE_DF,
-        nuisance_scale = NUISANCE_SCALE,
-        residual_delta = RESIDUAL_DELTA,
         nuisance_model = NUISANCE_MODEL,
-        single_site_scale = SINGLE_SITE_SCALE,
-        combat_compatible = COMBAT_COMPATIBLE,
-        eb             = EB,
     )
 
     print(f"Harmonized data shape: {Y_harmonized.shape}")
