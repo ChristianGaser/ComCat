@@ -2,10 +2,12 @@
 
 Harmonize data that is split across **sites which never share raw imaging data**.
 Each site keeps its own `Y`; only aggregate statistics are exchanged, and the
-result matches a centralized [`comcat()`](comcat.py) run with
-`nuisance_model='spline'` and `combat_compatible=True` to machine precision (the GAM
-B-spline basis is reproduced bitwise). The defaults of `comcat()`, P-splines with REML
-and df-consistent site variances, are not implemented here.
+result matches a centralized run of the **earlier ComCAT**
+([`evaluation/comcat_legacy.py`](evaluation/comcat_legacy.py) with
+`nuisance_model='spline'` and `combat_compatible=True`) to machine precision (the GAM
+B-spline basis is reproduced bitwise). The current [`comcat()`](comcat.py) (penalized
+splines with REML, site variances from the residuals after the nuisance effects) is not
+implemented here; without nuisance covariates, both are ComBat.
 
 > **Status: experimental.** This is a standalone module
 > ([`decentralized_comcat.py`](decentralized_comcat.py)). It is not wired into
@@ -26,7 +28,7 @@ confidentiality, storage), but you still want a single harmonization equivalent
 to running centralized ComCAT on the combined data.
 
 If you *can* pool the data, use [`comcat()`](comcat.py) directly — it is simpler
-and is the reference this module reproduces.
+and uses the current model.
 
 ---
 
@@ -35,11 +37,11 @@ and is the reference this module reproduces.
 - **One batch per site.** Each site holds exactly one batch/scanner (the topology
   from Bostami et al. 2022). Per-batch variance is therefore computed locally.
 - **GAM B-splines only** (Mode A). Every nuisance column is modelled with a
-  B-spline GAM, matching centralized ComCAT (which always uses GAM).
+  unpenalized B-spline GAM, as the earlier centralized ComCAT did.
 - **`ref_batch` is not supported** in this module (all sites are harmonized to the
   pooled grand mean). Everything else — `preserve` covariates, `mean_only`,
-  the common feature mask, empirical Bayes (`eb=True`, the default of `comcat()`) —
-  works as in `comcat()`. The empirical Bayes step runs on the aggregator and needs
+  the common feature mask, empirical Bayes (`eb=True`) —
+  works as in the earlier `comcat()`. The empirical Bayes step runs on the aggregator and needs
   only γ, the per-batch variances and the site sizes, which the rounds below already
   exchange.
 - Requires `statsmodels` (for the B-spline basis).
@@ -145,7 +147,7 @@ unmodified [`comcat_from_training()`](comcat.py).
 | `smooth_cols` | nuisance column indices to model with GAM (default: all) |
 | `gam_df` | B-spline basis dimension (default: sample-size heuristic on pooled `n`) |
 | `mean_only` | adjust mean only, no variance scaling |
-| `eb` | empirical Bayes estimation of the site effects (default `True`, as `comcat()`) |
+| `eb` | empirical Bayes estimation of the site effects (default `True`) |
 
 ---
 

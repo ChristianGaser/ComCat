@@ -1,4 +1,15 @@
-# ComCAT on held-out data: known issue and suggested fixes
+# ComCAT on held-out data: the issue of the earlier nuisance model (history)
+
+> **Status (2026-11-16): solved; kept as a record.** This document describes ComCAT
+> before 2026-10-28: unpenalized B-splines of seven partly redundant IQMs and a
+> variance step with one site. The current `comcat()` uses four non-redundant IQMs as
+> penalized splines (REML) removed in location only, ComBat's site model, and
+> `comcat_crossfit()` for held-out harmonization; the earlier model is frozen in
+> [evaluation/comcat_legacy.py](evaluation/comcat_legacy.py), which the scripts in
+> [evaluation/](evaluation/) use to reproduce the numbers below. The held-out
+> evaluation of the current model is in the ComCat paper (README, section Evidence).
+> What remains true: IQM effects estimated across few subjects take up anatomy, so the
+> IQMs need about 70 subjects or more.
 
 > **Update (2026-10-28, later):** the fixes suggested below are now options of
 > `comcat()`: `nuisance_model='linear'|'pspline'` (penalized splines, smoothing by
