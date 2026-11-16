@@ -1,5 +1,87 @@
 # Changelog
 
+## Unreleased (2026-11-16) — simplification: one model, nine options
+
+ComCAT had grown to 18 options, most of them added for the evaluations of the ComCat
+paper. An ablation on the six test samples of the paper (held out, feature level and
+BrainAGE) showed which of them change anything, and the model was reduced to
+**ComBat plus continuous nuisance covariates**.
+
+### Changed — the model (no options)
+
+- **Sites: ComBat's site model.** Location and scale with ComBat's empirical Bayes
+  estimates; the site variances come from the residuals after the site and nuisance
+  effects. Without nuisance covariates, `comcat()` is ComBat (`combat_family.combat_eb`,
+  ~1e-14 on ABIDE, ADNI and Buchert). This is what `combat_compatible=True,
+  residual_delta=True` gave before; the results are bit-identical
+  (`tests/test_comcat_vs_legacy.py`).
+- The df-consistent site variances and the location-only rule for sites with fewer than
+  four subjects (`min_scale_n`, default since 2026-11-02/04) are gone. They changed no
+  endpoint in ABIDE and ADNI (BrainAGE group differences within 0.02 years, site R²
+  within 0.001) and mattered only in Buchert (2–3 training scans per scanner: variance
+  across held-out scans 0.339 vs. 0.387; ComBat 0.457), where the gain over ComBat came
+  from the rule and not from the IQMs: permuted IQMs reached 0.336 with the rule, whereas
+  with ComBat's site model they stay at ComBat's level (0.460) and the real IQMs reach
+  0.387. Known consequence: ComBat's scale step shrinks the residuals of small sites
+  (held out, about 0.84 of the residual variance of a location-only correction with 3
+  subjects per site, 0.92 with 5, 0.97 with 10, 1.00 with 40), for ComBat and ComCAT
+  alike; `mean_only=True` avoids it.
+- **Empirical Bayes is always used** with at least two sites. Without it, the variance
+  across held-out Buchert scans was 5,289 times that of the raw data, and the site R² of
+  ADNI rose above the raw level (0.106 vs. 0.079).
+- **Nuisance covariates:** penalized B-splines with 10 basis functions and the smoothness
+  estimated by REML (`nuisance_model='pspline'`), or `'linear'`; location only.
+
+### Removed — options
+
+| Removed | Behaviour now |
+|---|---|
+| `eb` | always `True` |
+| `combat_compatible`, `residual_delta`, `min_scale_n` | ComBat's site variances from the residuals; every site with at least two subjects is scaled |
+| `single_site_scale` | one site: location only |
+| `nuisance_model='spline'`, `gam_df`, `smooth_term_bounds` | penalized splines with 10 basis functions over the training range, or `'linear'` |
+| `nuisance_penalty` | REML |
+| `nuisance_scale` (and `scale_lr`, `scale_p`, `scale_kurtosis`) | nuisance effects in location only |
+
+The names are still accepted when they ask for what this version does (`eb=True`,
+`combat_compatible=True`, `residual_delta=True`, `min_scale_n=2`,
+`single_site_scale=False`, `nuisance_scale=False`, `gam_df=10`,
+`nuisance_penalty='reml'`, `smooth_term_bounds=None`), so that scripts written for
+earlier versions keep running with the same model; any other value raises an error that
+points to the earlier version. `comcat_mat.py --min-scale-n 2` is accepted likewise.
+Kept: `mean_only`, `ref_batch`, `nuisance_model`, `preserve_df`, `preserve_bounds`,
+`subject`, `clip`, `return_estimates`, `verbose`.
+
+### Added
+
+- `evaluation/comcat_legacy.py`: the earlier `comcat.py` (commit 8c3ad69), frozen, with
+  all removed options, for the evaluations of the paper (unpenalized splines, basis
+  dimensions). `decentralized_comcat.py`, `simulate_comcat.py`, the scripts in
+  `evaluation/` and `tests/test_comcat_py.py` use it; the decentralized variant therefore
+  reproduces the earlier model, not the current one.
+- `tests/test_comcat_vs_legacy.py`: the current `comcat()`, `comcat_from_training()` and
+  `comcat_crossfit()` equal the earlier version with ComBat's site variances from the
+  residuals for every setting that was kept; removed options are accepted or refused as
+  described above.
+
+### Changed — interfaces and documentation
+
+- `comcat_ui.py`: the flags `--gam-df`, `--nuisance-scale`, `--residual-delta`,
+  `--single-site-scale`, `--combat-compatible` and `--no-eb` are gone. Folder names:
+  `comcat_sites_eb_preserve<n>_nuisance<n>_pspline` (no `_dfc`, `_resdelta`, `_scale`).
+  Folders of this name written between 2026-10-28 and 2026-11-02 hold site variances
+  estimated before the nuisance effects were removed; the log mat-file now records the
+  model.
+- `comcat_mat.py`: one design in the documentation (sites and IQMs removed; age, sex and
+  the diagnosis preserved with `--group`; fitted on all subjects); `--controls` stays as
+  the alternative.
+- `comcat.py` no longer needs statsmodels, except for `preserve_df`.
+- README rewritten; ComCat-Theory.md describes the one model (the theory of the removed
+  options is in the file at commit 8c3ad69).
+- Tests adapted to the remaining options: `test_comcat_scale.py` now pins the known
+  shrinkage of ComBat's scale step with small sites; `test_comcat_nuisance_models.py`
+  tests the recommended design (diagnosis preserved, fitted on all).
+
 ## Unreleased (2026-11-04)
 
 ### Fixed — review of the changes of 2026-11-04
