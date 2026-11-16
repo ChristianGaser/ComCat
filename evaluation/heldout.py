@@ -11,8 +11,8 @@ import warnings
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import comcat as cc  # noqa: E402
-from comcat import comcat, comcat_from_training  # noqa: E402
+import comcat_legacy as cc  # noqa: E402
+from comcat_legacy import comcat, comcat_from_training  # noqa: E402
 
 warnings.simplefilter('ignore', RuntimeWarning)
 _orig_pinv, _orig_basis = cc.pinv, cc._build_nuisance_basis

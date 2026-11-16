@@ -14,7 +14,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import eb_variants                                  # noqa: F401 (patches comcat)
 from eb_variants import CTX
-from comcat import comcat, comcat_from_training, _build_nuisance_basis
+from comcat_legacy import comcat, comcat_from_training, _build_nuisance_basis
 from data import load, subject_ids
 warnings.simplefilter('ignore', RuntimeWarning)
 

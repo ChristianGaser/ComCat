@@ -13,7 +13,7 @@ voxel's variance.  Default delta (unbiased within-site sample variance).
 import os, sys, time, warnings
 import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from comcat import comcat
+from comcat_legacy import comcat
 from data import load
 warnings.simplefilter('ignore', RuntimeWarning)
 

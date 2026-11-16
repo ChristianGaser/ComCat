@@ -10,7 +10,7 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import comcat as cc  # noqa: E402
+import comcat_legacy as cc  # noqa: E402
 
 _orig = cc._eb_site_effects
 CTX = {}          # set before each comcat call: 'Zt' (n x n_Z basis), 'codes', 'variant', 'tol'
