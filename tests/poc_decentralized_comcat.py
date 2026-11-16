@@ -30,8 +30,9 @@ import numpy as np
 from numpy.linalg import pinv
 
 # comcat.py lives in the repo root, one level up from this tests/ directory
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from comcat import comcat, comcat_from_training, _to_col_matrix
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                'evaluation'))
+from comcat_legacy import comcat, comcat_from_training, _to_col_matrix   # earlier ComCAT
 
 
 # ---------------------------------------------------------------------------

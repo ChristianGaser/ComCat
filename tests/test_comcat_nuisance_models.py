@@ -1,9 +1,10 @@
 """
 test_comcat_nuisance_models.py
 ==============================
-Tests for the nuisance models 'linear' and 'pspline', subject terms and
-cross-fitting (comcat.py: nuisance_model, nuisance_penalty, subject,
-comcat_crossfit).  Data are simulated with known effects.
+Tests for the nuisance models 'pspline' and 'linear', subject terms and
+cross-fitting (comcat.py: nuisance_model, subject, comcat_crossfit).  Data are
+simulated with known effects.  The unpenalized B-splines of earlier versions
+(evaluation/comcat_legacy.py) serve as a comparison.
 
 Simulations
 -----------
@@ -13,8 +14,9 @@ traveling():  subjects scanned repeatedly; the IQMs of a subject depend on its
               anatomy (subject effect), so an IQM effect estimated across
               subjects takes up anatomy, one estimated within subjects does not
 patients():   controls and patients; patients have a disease effect and worse
-              IQMs, so a model fitted on all subjects removes part of the
-              disease effect, one fitted on the controls does not
+              IQMs, so a model fitted on all subjects without the diagnosis removes
+              part of the disease effect; with the diagnosis preserved, or fitted on
+              the controls, it does not
 
 Run:
     python tests/test_comcat_nuisance_models.py
@@ -28,8 +30,11 @@ import numpy as np
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(_HERE))
+sys.path.insert(0, os.path.join(os.path.dirname(_HERE), 'evaluation'))
 
 from comcat import comcat, comcat_from_training, comcat_crossfit  # noqa: E402
+import comcat_legacy  # noqa: E402  (unpenalized B-splines, single_site_scale)
+
 
 def check(name, ok, detail=''):
     print(f"  [{'PASS' if ok else 'FAIL'}] {name:55s} {detail}")
@@ -74,9 +79,8 @@ def test_from_training_reproduces():
     print("comcat_from_training reproduces the in-sample result")
     Y, site, z, age, _ = simulate()
     for opts in ({'nuisance_model': 'linear'}, {'nuisance_model': 'pspline'},
-                 {'nuisance_model': 'pspline', 'nuisance_penalty': 'gcv'},
                  {'nuisance_model': 'pspline', 'mean_only': True},
-                 {'nuisance_model': 'linear', 'residual_delta': True}):
+                 {'nuisance_model': 'linear', 'mean_only': True}):
         H, *_, est = comcat(Y, site, z, age, return_estimates=True, **opts)
         Hf = comcat_from_training(Y, site, z, age, estimates=est)
         err = np.abs(H - Hf).max()
@@ -102,10 +106,17 @@ def test_heldout_error():
     for name, opts in (('spline', {'nuisance_model': 'spline', 'gam_df': 10}),
                        ('pspline', {'nuisance_model': 'pspline'}),
                        ('linear', {'nuisance_model': 'linear'})):
-        bounds = [(z[:, j].min(), z[:, j].max()) for j in range(2)]
-        est = comcat(Y[:, tr], site[tr], z[tr], age[tr], mean_only=True,
-                     smooth_term_bounds=bounds, return_estimates=True, **opts)[4]
-        H = comcat_from_training(Y[:, ~tr], site[~tr], z[~tr], age[~tr], estimates=est)
+        if name == 'spline':            # earlier versions: knots over all samples
+            bounds = [(z[:, j].min(), z[:, j].max()) for j in range(2)]
+            est = comcat_legacy.comcat(Y[:, tr], site[tr], z[tr], age[tr], mean_only=True,
+                                       smooth_term_bounds=bounds, return_estimates=True,
+                                       **opts)[4]
+            H = comcat_legacy.comcat_from_training(Y[:, ~tr], site[~tr], z[~tr], age[~tr],
+                                                   estimates=est)
+        else:
+            est = comcat(Y[:, tr], site[tr], z[tr], age[tr], mean_only=True,
+                         return_estimates=True, **opts)[4]
+            H = comcat_from_training(Y[:, ~tr], site[~tr], z[~tr], age[~tr], estimates=est)
         removed = Y[:, ~tr] - H
         truth = effect[:, ~tr] - effect[:, ~tr].mean(axis=1, keepdims=True)
         removed -= removed.mean(axis=1, keepdims=True)
@@ -144,7 +155,7 @@ def test_subject_terms():
 
 
 def test_crossfit_controls():
-    print("comcat_crossfit: models fitted on the controls keep the disease effect")
+    print("comcat_crossfit: the diagnosis preserved, or models fitted on the controls, keep the disease effect")
     Y, z, group, disease = patients()
     d0 = Y[:, group == 1].mean(axis=1) - Y[:, group == 0].mean(axis=1)
     keep = {}
@@ -156,6 +167,12 @@ def test_crossfit_controls():
           f"slope {keep['all subjects']:.2f} (raw {np.polyfit(disease, d0, 1)[0]:.2f})")
     check("fitted on controls: disease effect kept", abs(keep['controls'] - 1) < 0.1,
           f"slope {keep['controls']:.2f}")
+    # the recommended design: fitted on all subjects with the diagnosis preserved
+    H = comcat_crossfit(Y, None, z, group, folds=5, nuisance_model='linear')
+    d = H[:, group == 1].mean(axis=1) - H[:, group == 0].mean(axis=1)
+    slope = np.polyfit(disease, d, 1)[0]
+    check("fitted on all, diagnosis preserved: disease effect kept", abs(slope - 1) < 0.1,
+          f"slope {slope:.2f}")
 
     Y, site, z, age, _ = simulate()
     H, folds = comcat_crossfit(Y, site, z, age, folds=4, nuisance_model='pspline',
@@ -197,37 +214,46 @@ def test_screening():
 
 
 def test_single_site_location_only():
-    print("one site: location correction only, unless single_site_scale")
+    print("one site: location correction only")
     Y, site, z, age, _ = simulate()
     one = np.ones(len(age), dtype=int)
     a = comcat(Y, one, z, age)[0]
     b = comcat(Y, one, z, age, mean_only=True)[0]
     c = comcat(Y, None, z, age)[0]
-    old = comcat(Y, one, z, age, single_site_scale=True)[0]
     check("explicit single site == mean_only == no batch",
           np.allclose(a, b) and np.allclose(a, c), f"max_abs={np.abs(a - c).max():.1e}")
+    # the variance step of earlier versions with one site shrank all residuals
+    old = comcat_legacy.comcat(Y, one, z, age, single_site_scale=True)[0]
     shrink = np.mean(np.var(old, axis=1) / np.var(a, axis=1))
-    check("single_site_scale shrinks all variance (earlier versions)", shrink < 0.95,
+    check("earlier versions (single_site_scale) shrank all variance", shrink < 0.95,
           f"variance ratio {shrink:.2f}")
     from comcat_ui import _build_subfolder
     est = comcat(Y, one, z, age, return_estimates=True)[4]
-    name = _build_subfolder(1, 2, 1, est['mean_only'], gam_df=5)
+    name = _build_subfolder(1, 2, 1, est['mean_only'])
     check("comcat_ui folder marks location-only runs",
-          name.endswith('_meanonly_nuisance2_pspline'), name)
-    legacy = _build_subfolder(1, 2, 1, False, gam_df=5, nuisance_model='spline')
-    check("comcat_ui folder of the earlier model unchanged", legacy == 'comcat_preserve1_nuisance2_gam5',
-          legacy)
+          name == 'comcat_preserve1_meanonly_nuisance2_pspline', name)
+    check("comcat_ui folders with sites",
+          _build_subfolder(3, 4, 2, False) == 'comcat_sites_eb_preserve2_nuisance4_pspline'
+          and _build_subfolder(3, 0, 1, False) == 'combat_sites_eb_preserve1'
+          and _build_subfolder(3, 4, 1, True, 6, 'linear')
+          == 'comcat_sites_eb_preserve1_gam6_meanonly_nuisance4_linear')
 
 
 def test_default_model():
-    print("default nuisance model: penalized B-splines; the earlier spline stays available")
+    print("default nuisance model: penalized B-splines with REML")
     Y, site, z, age, _ = simulate()
     a, *_, est = comcat(Y, site, z, age, return_estimates=True)
-    b = comcat(Y, site, z, age, nuisance_model='pspline', nuisance_penalty='reml')[0]
-    check("default == explicit 'pspline' with REML", np.array_equal(a, b),
-          f"model {est['nuisance_model']}, gam_df {est['gam_df']}")
-    old = comcat(Y, site, z, age, nuisance_model='spline')[0]
-    check("'spline' (earlier versions) differs from the default", not np.allclose(a, old))
+    b = comcat(Y, site, z, age, nuisance_model='pspline')[0]
+    check("default == explicit 'pspline'", np.array_equal(a, b),
+          f"model {est['nuisance_model']}, penalty {est['nuisance_lambda']:.3g}, "
+          f"edf {est['nuisance_edf']:.2f}")
+    lin, *_, est = comcat(Y, site, z, age, nuisance_model='linear', return_estimates=True)
+    check("'linear': one term per column, no penalty",
+          est['nuisance_edf'] == 2 and est['nuisance_lambda'] is None
+          and not np.array_equal(a, lin))
+    old = comcat_legacy.comcat(Y, site, z, age, nuisance_model='spline')[0]
+    check("unpenalized B-splines of earlier versions differ from the default",
+          not np.allclose(a, old))
 
 
 if __name__ == '__main__':

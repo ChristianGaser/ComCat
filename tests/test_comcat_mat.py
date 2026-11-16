@@ -51,7 +51,7 @@ def simulate(d, n=90, p=40, seed=0):
                 q=np.loadtxt(os.path.join(d, 'iqm.txt')), group=group)
 
 
-def test_min_scale_n():
+def test_small_sites_scaled_as_combat():
     with tempfile.TemporaryDirectory() as d:
         s = simulate(d)
         f = lambda name: os.path.join(d, name)                  # noqa: E731
@@ -60,17 +60,24 @@ def test_min_scale_n():
         fit[np.r_[0:3, 30:90]] = True            # site 1: 3 controls, 2 in every fit
         Y = s['Y'].astype(np.float32).astype(float).T
         H = {}
-        for n_min in (None, '2'):
+        for n_min in (None, '2'):                # the option of earlier versions
             extra = [] if n_min is None else ['--min-scale-n', n_min]
             comcat_mat.main([f('test.mat'), '--site', f('site.txt'), '--folds', '3',
                              '--controls', '1:3,31:90', '--out', f(f'out/m{n_min}.mat')]
                             + extra)
             H[n_min] = loadmat(f(f'out/m{n_min}.mat'))['Y']
-        H2 = comcat_crossfit(Y, code, None, None, folds=3, fit=fit, min_scale_n=2).T
-        check("--min-scale-n 2 as comcat_crossfit(min_scale_n=2)",
-              np.allclose(H['2'], H2, atol=1e-6))
-        check("default 4 differs where a site has 2 subjects in the fit",
-              not np.allclose(H[None], H['2'], atol=1e-6))
+        H2 = comcat_crossfit(Y, code, None, None, folds=3, fit=fit).T
+        check("as comcat_crossfit: every site with two subjects in the fit is scaled",
+              np.allclose(H[None], H2, atol=1e-6))
+        check("--min-scale-n 2 of earlier versions accepted, same result",
+              np.array_equal(H[None], H['2']))
+        try:
+            comcat_mat.main([f('test.mat'), '--site', f('site.txt'), '--min-scale-n', '4',
+                             '--out', f('out/m4.mat')])
+            refused = False
+        except SystemExit:
+            refused = True
+        check("--min-scale-n 4 (removed rule) refused", refused)
 
 
 def test_labels_and_refusals():

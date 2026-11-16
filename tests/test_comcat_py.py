@@ -34,8 +34,11 @@ from scipy.io import loadmat
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
 sys.path.insert(0, _ROOT)
+sys.path.insert(0, os.path.join(_ROOT, 'evaluation'))
 from functools import partial  # noqa: E402
-from comcat import comcat, comcat_from_training  # noqa: E402
+# the MATLAB code corresponds to the earlier ComCAT (no empirical Bayes, site variances
+# before the nuisance effects are removed), kept in evaluation/comcat_legacy.py
+from comcat_legacy import comcat, comcat_from_training  # noqa: E402
 
 # the MATLAB reference results were computed with the unpenalized B-splines
 comcat = partial(comcat, nuisance_model='spline')

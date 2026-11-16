@@ -1,23 +1,20 @@
 """
 test_comcat_scale.py
 ====================
-Tests for the scale step of the sites (comcat.py, several sites, mean_only=False).
+Tests for the scale step of the sites (comcat.py, several sites, mean_only=False), which
+is that of ComBat: site variances from the residuals after the site and nuisance effects,
+with ComBat's empirical Bayes posterior.
 
-ComBat estimates every site variance with n_i - 1 degrees of freedom but the pooled
-variance it is compared with with n, and its empirical Bayes posterior divides by n_i.
-With few subjects per site, the site variances are then too large on average, and the
-scale step shrinks the harmonized residuals even when the sites do not differ in
-variance.  By default, ComCAT uses df-consistent site variances (residual df n_i minus
-the leverage of the site's subjects, and the matching EB posterior); combat_compatible
-=True gives the ComBat estimates.
-
-1. Equal site variances: the df-consistent site variances are about 1 at every site
-   size; with many small sites, the ComBat ones are inflated.
-2. Equal site variances: the scale step keeps the residual variance of the location-only
-   correction, in-sample and held out (cross-fitted); with combat_compatible it shrinks it.
-3. Unequal site variances: the scale step equalizes the residual SDs of the sites held
-   out, and the site variances follow the true ones.
-4. The estimates record the setting, and comcat_from_training applies them.
+1. Known property of ComBat's site variances, kept on purpose (ComCAT without nuisance
+   covariates is ComBat): every site variance has n_i - 1 degrees of freedom, the pooled
+   variance n, and the posterior divides by n_i.  With few subjects per site, the site
+   variances are too large on average, and the scale step shrinks the harmonized
+   residuals even when the sites do not differ in variance; with 40 subjects per site
+   it does not.  mean_only=True avoids it.
+2. Unequal site variances: the scale step reduces the differences of the residual SDs
+   between the sites held out, and the site variances follow the true ones.
+3. comcat_from_training applies the estimates.
+4. A site with a single subject gets no site correction.
 
 Run:
     python tests/test_comcat_scale.py
@@ -68,56 +65,32 @@ def site_means(D, site):
 
 # ---------------------------------------------------------------------------
 
-def test_site_variances_unbiased():
-    print("Equal site variances: df-consistent site variances ~ 1 at every site size")
-    sizes = [3, 4, 6, 10, 20, 40]
-    Y, site, Z, age, *_ = simulate(sizes, seed=1)
-    for eb in (False, True):
-        key = 'delta_star_masked' if eb else 'delta_hat_masked'
-        est = comcat(Y, site, Z, age, eb=eb, return_estimates=True)[4]
-        m = site_means(est[key][:len(sizes)], site)
-        check(f"eb={eb}: mean site variance per site in 0.85-1.15",
-              np.all(np.abs(m - 1) < 0.15), np.round(m, 2).tolist())
-    # many small sites: ComBat's site variances are inflated by about n / (n - k)
-    sizes = [4] * 30
-    Y, site, Z, age, *_ = simulate(sizes, seed=5)
-    for cc in (False, True):
-        est = comcat(Y, site, Z, age, combat_compatible=cc, residual_delta=True,
-                     return_estimates=True)[4]
-        m = float(np.mean(est['delta_star_masked'][:len(sizes)]))
-        if cc:
-            check("30 sites of 4, combat_compatible: mean site variance > 1.2", m > 1.2,
-                  f"{m:.3f}")
-        else:
-            check("30 sites of 4, default: mean site variance in 0.9-1.1",
-                  abs(m - 1) < 0.1, f"{m:.3f}")
+def test_shrinkage_with_small_sites():
+    print("Equal site variances: ComBat's scale step shrinks the residuals of small sites")
 
+    def ratios(sizes, seed):
+        Y, site, Z, age, signal, _ = simulate(sizes, seed=seed)
+        n = Y.shape[1]
 
-def test_scale_step_keeps_residual_variance():
-    print("Equal site variances: the scale step keeps the residual variance")
-    sizes = [4] * 30
-    Y, site, Z, age, signal, _ = simulate(sizes, seed=2)
-    n = Y.shape[1]
+        def resid_var(H):
+            return float(np.mean((H - signal).var(axis=1)))
 
-    def resid_var(H):
-        return float(np.mean((H - signal).var(axis=1)))
-
-    v = {}
-    for name, opts in (('loc', dict(mean_only=True)), ('ls', dict()),
-                       ('combat', dict(combat_compatible=True, residual_delta=True))):
-        v[name] = resid_var(comcat(Y, site, Z, age, **opts)[0])
         folds = _make_folds(site, None, np.ones(n, bool), 4, 0)
-        v[name + '_cv'] = resid_var(comcat_crossfit(Y, site, Z, age, folds=folds, **opts))
-    r_new, r_old = v['ls_cv'] / v['loc_cv'], v['combat_cv'] / v['loc_cv']
-    check("held out: default / location only in 0.95-1.05", abs(r_new - 1) < 0.05,
-          f"{r_new:.3f}")
-    check("held out: combat_compatible / location only < 0.92", r_old < 0.92,
-          f"{r_old:.3f}")
-    r_new, r_old = v['ls'] / v['loc'], v['combat'] / v['loc']
-    check("in-sample: default / location only in 0.95-1.05", abs(r_new - 1) < 0.05,
-          f"{r_new:.3f}")
-    check("in-sample: combat_compatible / location only < 0.85", r_old < 0.85,
-          f"{r_old:.3f}")
+        v = {}
+        for name, opts in (('loc', dict(mean_only=True)), ('ls', dict())):
+            v[name] = resid_var(comcat(Y, site, Z, age, **opts)[0])
+            v[name + '_cv'] = resid_var(comcat_crossfit(Y, site, Z, age, folds=folds, **opts))
+        return v['ls'] / v['loc'], v['ls_cv'] / v['loc_cv']
+
+    r_in, r_cv = ratios([4] * 30, seed=2)
+    check("30 sites of 4, held out: scale step / location only < 0.92", r_cv < 0.92,
+          f"{r_cv:.3f}")
+    check("30 sites of 4, in-sample: scale step / location only < 0.85", r_in < 0.85,
+          f"{r_in:.3f}")
+    r_in, r_cv = ratios([40] * 6, seed=2)
+    check("6 sites of 40, held out: scale step / location only in 0.97-1.03",
+          abs(r_cv - 1) < 0.03, f"{r_cv:.3f}")
+    check("6 sites of 40, in-sample: in 0.95-1.03", 0.95 < r_in < 1.03, f"{r_in:.3f}")
 
 
 def test_scale_step_equalizes_sites():
@@ -144,88 +117,45 @@ def test_scale_step_equalizes_sites():
 
 
 def test_estimates_and_from_training():
-    print("Estimates record the setting; comcat_from_training applies them")
+    print("comcat_from_training applies the estimates")
     Y, site, Z, age, *_ = simulate([4, 6, 10, 20], seed=4)
-    bounds = [(z.min(), z.max()) for z in Z.T]
-    for cc in (False, True):
-        Yh, *_, est = comcat(Y, site, Z, age, combat_compatible=cc, return_estimates=True,
-                             smooth_term_bounds=bounds)
-        check(f"combat_compatible={cc}: recorded", est['combat_compatible'] == cc
-              and (est['site_df'] is None) == cc)
+    for opts in (dict(), dict(mean_only=True)):
+        Yh, *_, est = comcat(Y, site, Z, age, return_estimates=True, **opts)
         err = np.max(np.abs(Yh - comcat_from_training(Y, site, Z, age, estimates=est)))
-        check(f"combat_compatible={cc}: from_training == comcat", err < 1e-8,
-              f"max_abs={err:.1e}")
-    est = comcat(Y, site, Z, age, return_estimates=True)[4]
-    check("site df below the site sizes", np.all(est['site_df'] < np.array([4, 6, 10, 20])),
-          np.round(est['site_df'], 2).tolist())
+        check(f"{opts}: from_training == comcat", err < 1e-8, f"max_abs={err:.1e}")
+    d = comcat(Y, site, Z, age, return_estimates=True)[4]['delta_star_masked'][:4]
+    check("every site with at least two subjects gets a site variance",
+          np.all(np.isfinite(d)) and not np.any(np.all(np.isclose(d, 1), axis=1)))
 
 
 def test_single_subject_site():
     print("A site with one subject gets no site correction (its effect is not identified)")
     Y, site, Z, age, *_ = simulate([1, 10, 20], seed=5)
     one = site == np.unique(site)[0]
-    for cc in (False, True):
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
         for mean_only in (False, True):
-            tag = f"combat_compatible={cc}, mean_only={mean_only}"
-            opts = dict(combat_compatible=cc, mean_only=mean_only)
+            tag = f"mean_only={mean_only}"
+            opts = dict(mean_only=mean_only)
             Yh, *_, est = comcat(Y, site, Z, age, return_estimates=True, **opts)
             d = est['delta_star_masked'][:3]
             check(f"{tag}: finite site variances, 1 for the single subject",
                   np.all(np.isfinite(d)) and np.allclose(d[0], 1))
-            # in-sample, the subject keeps its deviations (before: replaced by its
-            # predicted values, as its residual was removed as the site effect)
+            # in-sample, the subject keeps its deviations (it is not replaced by its
+            # predicted values, as it would be if its residual were the site effect)
             Y1 = Y.copy()
             Y1[:, one] += 1.0
             gain = np.mean(comcat(Y1, site, Z, age, **opts)[0][:, one] - Yh[:, one])
             check(f"{tag}: the subject keeps its deviations", abs(gain - 1) < 0.1,
                   f"+1 on its data -> {gain:+.3f}")
             # new scans of that site: as at an unseen site, i.e. not shifted by the
-            # single subject's deviations (and finite: before, ComBat's variance was NaN)
+            # single subject's deviations
             Yn = Y[:, one] + np.linspace(-1, 1, Y.shape[0])[:, None]
             Ha = comcat_from_training(Yn, site[one], Z[one], age[one], estimates=est)
             Hu = comcat_from_training(Yn, np.array([99]), Z[one], age[one], estimates=est,
                                       unseen_batch='mean')
             check(f"{tag}: new scans as at an unseen site", np.allclose(Ha, Hu),
                   f"max_abs={np.max(np.abs(Ha - Hu)):.1e}")
-
-
-def test_small_sites_location_only():
-    print("Sites with fewer than min_scale_n subjects: location only (no scale step)")
-    Y, site, Z, age, *_ = simulate([3, 4, 20], seed=6, scale_sd=0.5)
-    small = site == np.unique(site)[0]
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
-        for cc in (False, True):
-            tag = f"combat_compatible={cc}"
-            Yh, *_, est = comcat(Y, site, Z, age, return_estimates=True, combat_compatible=cc)
-            Y2 = comcat(Y, site, Z, age, combat_compatible=cc, min_scale_n=2)[0]
-            d = est['delta_star_masked'][:3]
-            if not cc:
-                check(f"{tag}: site variance 1 with 3 subjects, estimated with 4 and 20",
-                      np.allclose(d[0], 1) and not np.allclose(d[1], 1)
-                      and not np.allclose(d[2], 1))
-                check(f"{tag}: the other sites as without the rule",
-                      np.allclose(Yh[:, ~small], Y2[:, ~small]))
-                check(f"{tag}: the small site differs from its scale step",
-                      not np.allclose(Yh[:, small], Y2[:, small]))
-            else:
-                check(f"{tag}: ComBat unchanged", np.allclose(Yh, Y2) and not np.allclose(d[0], 1))
-            Hf = comcat_from_training(Y, site, Z, age, estimates=est)
-            check(f"{tag}: comcat_from_training applies the same", np.allclose(Hf, Yh),
-                  f"max_abs={np.max(np.abs(Hf - Yh)):.1e}")
-            # with a reference site, the small site keeps its variance (its scale factor
-            # sqrt(delta_ref / delta) is 1), in comcat() and comcat_from_training()
-            ref = np.unique(site)[2]
-            Hr, *_, est = comcat(Y, site, Z, age, ref_batch=ref, return_estimates=True,
-                                 combat_compatible=cc)
-            dm = est['delta_star_masked']
-            if not cc:
-                r = dm[0] / dm[2]
-                check(f"{tag}, ref_batch: small site's variance ratio to the reference is 1",
-                      np.allclose(r, 1), f"range {r.min():.3f}-{r.max():.3f}")
-            Hf = comcat_from_training(Y, site, Z, age, estimates=est)
-            check(f"{tag}, ref_batch: comcat_from_training applies the same",
-                  np.allclose(Hf, Hr), f"max_abs={np.max(np.abs(Hf - Hr)):.1e}")
 
 
 if __name__ == '__main__':

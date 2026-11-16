@@ -1,20 +1,18 @@
 """
 test_comcat_options.py
 ======================
-Tests for the optional ComCAT extensions preserve_df, nuisance_scale and
-residual_delta, and for ref_batch (comcat.py).  Unlike test_comcat_py.py, no
-MATLAB reference files are needed: data are simulated with known effects.
+Tests for the options of comcat(): preserve_df, ref_batch, and that the scale step keeps
+the residual variance (site variances from the residuals).  No MATLAB reference files are
+needed: data are simulated with known effects.
 
 Simulations
 -----------
-simulate() (nuisance_scale, LR test, from_training):
+simulate() (from_training, ref_batch):
   3 sites, one image quality metric (IQM) z correlated with age (r ~ 0.6)
   mean:      non-linear (quadratic) age effect; z has NO effect on the mean
-  variance:  noise SD grows with z (nuisance heteroscedasticity, to remove)
-             and with age (biological, to preserve)
-  noise:     normal, heavy-tailed (t5) or skewed (chi-square), see noise()
+  variance:  noise SD grows with z and with age
   sites:     additive and multiplicative effects
-preserve_df, residual_delta and ref_batch tests build their own data (see there).
+The other tests build their own data (see there).
 
 Run:
     python tests/test_comcat_options.py
@@ -25,10 +23,10 @@ import sys
 import warnings
 
 import numpy as np
-from scipy.stats import chi2
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(_HERE))
+sys.path.insert(0, os.path.join(os.path.dirname(_HERE), 'evaluation'))
 from comcat import comcat, comcat_from_training  # noqa: E402
 
 warnings.simplefilter('ignore', RuntimeWarning)
@@ -81,17 +79,19 @@ def residuals_around_age(Yh, age):
     return Yh - (A @ np.linalg.lstsq(A, Yh.T, rcond=None)[0]).T
 
 
-def test_defaults_unchanged():
-    print("Defaults: the documented defaults of the options")
+def test_options_as_documented():
+    print("Options: those of the documentation, with their defaults")
     import inspect
     from comcat import comcat_crossfit
-    defaults = {k: v.default for k, v in inspect.signature(comcat).parameters.items()}
-    documented = dict(mean_only=False, preserve_df=None, nuisance_scale=False,
-                      residual_delta=False, eb=True, nuisance_model='pspline',
-                      subject=None, single_site_scale=False, combat_compatible=False,
-                      gam_df=None)
-    wrong = {k: defaults[k] for k, v in documented.items() if defaults[k] != v}
-    check("defaults as documented (README)", not wrong, str(wrong))
+    par = inspect.signature(comcat).parameters
+    defaults = {k: v.default for k, v in par.items() if v.kind == v.POSITIONAL_OR_KEYWORD}
+    documented = dict(nuisance=None, preserve=None, mean_only=False, verbose=False,
+                      ref_batch=None, return_estimates=False, nuisance_model='pspline',
+                      preserve_df=None, preserve_bounds=None, subject=None, clip=True)
+    extra = set(defaults) - set(documented) - {'Y', 'batch'}
+    wrong = {k: defaults.get(k) for k, v in documented.items() if defaults.get(k, '?') != v}
+    check("options and defaults as documented (README)", not wrong and not extra,
+          f"{wrong} {extra}")
     crossfit = inspect.signature(comcat_crossfit).parameters
     check("comcat_crossfit: subject_terms=False, folds=5",
           crossfit['subject_terms'].default is False and crossfit['folds'].default == 5)
@@ -117,21 +117,22 @@ def test_preserve_df_keeps_nonlinear_age_effect():
 
     def curve_loss(**opts):
         # relative error of the fitted age curve of the harmonized data
-        Yh = comcat(Y, batch, Z, age[:, None], gam_df=6, residual_delta=True, **opts)[0]
+        Yh = comcat(Y, batch, Z, age[:, None], **opts)[0]
         A = np.column_stack([np.ones(n), a, a ** 2, a ** 3])
         fit = A @ np.linalg.lstsq(A, Yh.T, rcond=None)[0]
         fit -= fit.mean(0)
         return np.mean((fit - true) ** 2) / np.mean(true ** 2)
 
-    loss_lin, loss_spl = curve_loss(), curve_loss(preserve_df='same')
+    loss_lin, loss_spl = curve_loss(), curve_loss(preserve_df=6)
     check("linear age term: age curve largely removed", loss_lin > 0.5, f"{loss_lin:.3f}")
     check("spline age term: age curve preserved", loss_spl < 0.1, f"{loss_spl:.3f}")
 
 
-def test_residual_delta_keeps_residual_variance():
-    print("residual_delta: residual (noise) variance is kept")
+def test_scale_step_keeps_residual_variance():
+    print("Scale step: the residual (noise) variance is kept")
     # homoscedastic noise with variance 1, additive site effects, and an IQM
     # effect on the mean with variance ~4 that ComCAT removes
+    from comcat_legacy import comcat as comcat_earlier
     rng = np.random.default_rng(0)
     n, p = 450, 300
     batch = np.repeat([0, 1, 2], 150)
@@ -141,90 +142,29 @@ def test_residual_delta_keeps_residual_variance():
     Y = ((0.8 * a ** 2 + 0.5 * a)[:, None] + 2.0 * (z - z.mean())[:, None]
          + rng.normal(size=(n, p)) + rng.normal(size=(3, p))[batch]).T
 
-    def noise_var(**opts):
-        Yh = comcat(Y, batch, z[:, None], age[:, None], gam_df=6,
-                    preserve_df='same', **opts)[0]
+    def noise_var(fn=comcat, **opts):
+        Yh = fn(Y, batch, z[:, None], age[:, None], preserve_df=6, **opts)[0]
         return np.median(residuals_around_age(Yh, age).var(1))
 
-    v_old = noise_var(combat_compatible=True)
-    v_rd = noise_var(combat_compatible=True, residual_delta=True)
     v_new = noise_var()
     # in-sample fit removes ~k/n of the noise variance (k ~ 15 parameters)
-    check("combat_compatible, residual_delta: residual variance ~ true noise (1)",
-          0.9 < v_rd < 1.02, f"{v_rd:.3f}")
-    check("default (site variances from residuals): ~ true noise (1)",
+    check("site variances from the residuals: residual variance ~ true noise (1)",
           0.9 < v_new < 1.02, f"{v_new:.3f}")
-    # earlier default: site variances before the nuisance effects are removed, shrunk
+    # earlier versions: site variances before the nuisance effects are removed, shrunk
     # by ~ 1 / (1 + var(nuisance effect) / var(noise)) ~ 1/5
-    check("combat_compatible: residual variance shrunk", v_old < 0.3, f"{v_old:.3f}")
-
-
-def test_nuisance_scale_removes_heteroscedasticity():
-    print("nuisance_scale: IQM-dependent variance removed, age-dependent kept")
-    Y, batch, z, age, *_ = simulate(z_scale=0.35)
-    zc = z[:, 0]
-    kw = dict(gam_df=6, preserve_df='same')
-
-    def log_sd_slopes(Yh):
-        R = residuals_around_age(Yh, age[:, 0])
-        # site-wise standardization to remove residual site scale differences
-        for s in np.unique(batch):
-            R[:, batch == s] /= R[:, batch == s].std(1, keepdims=True)
-        L = 0.5 * np.log(R ** 2 + 1e-12)
-        D = np.column_stack([np.ones_like(zc), (zc - zc.mean()) / zc.std(),
-                             (age[:, 0] - 50) / 15])
-        return np.median(np.linalg.lstsq(D, L.T, rcond=None)[0][1:], axis=1)
-
-    b_off = log_sd_slopes(comcat(Y, batch, z, age, **kw)[0])
-    b_on = log_sd_slopes(comcat(Y, batch, z, age, nuisance_scale=True, **kw)[0])
-    check("IQM effect on log SD present without option", b_off[0] > 0.25,
-          f"slope {b_off[0]:.3f}")
-    check("IQM effect on log SD removed with option", abs(b_on[0]) < 0.05,
-          f"slope {b_on[0]:.3f}")
-    check("age effect on log SD preserved", abs(b_on[1] - b_off[1]) < 0.05 and b_on[1] > 0.1,
-          f"age slope {b_off[1]:.3f} -> {b_on[1]:.3f}")
-
-
-def test_scale_lr_test():
-    print("nuisance_scale: likelihood-ratio test of IQM variance effects")
-    for z_scale, label in ((0.0, "null"), (0.35, "effect")):
-        Y, batch, z, age, *_ = simulate(z_scale=z_scale, seed=3)
-        est = comcat(Y, batch, z, age, gam_df=6, preserve_df='same',
-                     nuisance_scale=True, return_estimates=True)[4]
-        frac = np.mean(est['scale_p'] < 0.05)
-        if label == "null":
-            check("null: ~5% of features p < 0.05", 0.01 < frac < 0.10,
-                  f"{100 * frac:.1f}%  mean LR {np.mean(est['scale_lr']):.2f} "
-                  f"(df {est['scale_lr_df']})")
-        else:
-            check("effect: most features p < 0.05", frac > 0.9, f"{100 * frac:.1f}%")
-
-    # the deviance difference is chi-square only for normal residuals; for
-    # non-normal residuals it is (kurtosis - 1) / 2 times larger, which the
-    # studentized statistic removes
-    for kind in ('t5', 'chi2'):
-        Y, batch, z, age, *_ = simulate(z_scale=0.0, seed=3, kind=kind)
-        est = comcat(Y, batch, z, age, gam_df=6, preserve_df='same',
-                     nuisance_scale=True, return_estimates=True)[4]
-        frac = np.mean(est['scale_p'] < 0.05)
-        lr_plain = est['scale_lr'] * (est['scale_kurtosis'] - 1) / 2
-        frac_plain = np.mean(chi2.sf(lr_plain, est['scale_lr_df']) < 0.05)
-        check(f"null, {kind} noise: ~5% of features p < 0.05", 0.01 < frac < 0.10,
-              f"{100 * frac:.1f}%  median kurtosis {np.median(est['scale_kurtosis']):.1f}")
-        check(f"null, {kind} noise: unstudentized LR > 2x nominal level", frac_plain > 0.10,
-              f"{100 * frac_plain:.1f}%")
+    v_old = noise_var(comcat_earlier, combat_compatible=True)
+    check("earlier versions (comcat_legacy): residual variance shrunk", v_old < 0.3,
+          f"{v_old:.3f}")
 
 
 def test_from_training_reproduces_in_sample():
     print("comcat_from_training reproduces the in-sample result with all options")
     Y, batch, z, age, *_ = simulate()
-    bounds = [(z.min(), z.max())]
     pbounds = [(age.min(), age.max())]
-    for opts in (dict(preserve_df='same'), dict(residual_delta=True),
-                 dict(nuisance_scale=True),
-                 dict(preserve_df='same', nuisance_scale=True)):
-        Yh, *_, est = comcat(Y, batch, z, age, gam_df=6, return_estimates=True,
-                             smooth_term_bounds=bounds, preserve_bounds=pbounds, **opts)
+    for opts in (dict(), dict(preserve_df='same'), dict(mean_only=True),
+                 dict(nuisance_model='linear'), dict(preserve_df=6, nuisance_model='linear')):
+        Yh, *_, est = comcat(Y, batch, z, age, return_estimates=True,
+                             preserve_bounds=pbounds, **opts)
         Yft = comcat_from_training(Y, batch, z, age, estimates=est)
         err = np.max(np.abs(Yh - Yft))
         check(f"from_training == comcat  {opts}", err < 1e-8, f"max_abs={err:.1e}")
@@ -236,14 +176,11 @@ def test_ref_batch_with_nuisance():
     rng = np.random.default_rng(1)
     zs = (z[:, 0] - z.mean()) / z.std()
     Y = Y + 0.5 * np.outer(rng.uniform(0.5, 1.5, Y.shape[0]), zs)   # IQM effect on the mean
-    # second IQM with many ties (like res_RMS): repeated spline knots make the
-    # design matrix rank-deficient
+    # second IQM with many ties (like res_RMS)
     z2 = np.maximum(rng.normal(size=len(batch)), 0.3)
     Z = np.column_stack([z[:, 0], z2])
-    bounds = [(Z[:, j].min(), Z[:, j].max()) for j in range(Z.shape[1])]
-    Yh, *_, est = comcat(Y, batch, Z, age, gam_df=6, preserve_df='same', ref_batch=0,
-                         smooth_term_bounds=bounds, preserve_bounds=[(age.min(), age.max())],
-                         return_estimates=True)
+    Yh, *_, est = comcat(Y, batch, Z, age, preserve_df=6, ref_batch=0,
+                         preserve_bounds=[(age.min(), age.max())], return_estimates=True)
     ref = batch == 0
     check("harmonized data finite and bounded",
           np.all(np.isfinite(Yh)) and np.abs(Yh).max() < 2 * np.abs(Y).max(),
@@ -288,8 +225,7 @@ def test_ref_batch_variance():
         return np.array(sd) / sd[1]
 
     for label, nuis, opts, cov in (("no nuisance", None, {}, (age,)),
-                                   ("nuisance, residual_delta", z[:, None],
-                                    dict(residual_delta=True), (age, z))):
+                                   ("nuisance", z[:, None], {}, (age, z))):
         Yh, *_, est = comcat(Y, batch, nuis, age[:, None], ref_batch=1,
                              return_estimates=True, **opts)
         before, after = sd_ratio(Y, cov), sd_ratio(Yh, cov)
