@@ -1,7 +1,7 @@
-# ComCAT — required dependencies
+# ComCAT — dependencies
 numpy>=1.22
 scipy>=1.8
-nibabel>=4.0
-statsmodels>=0.13
-h5py>=3.0
-matplotlib>=3.5
+nibabel>=4.0         # comcat_ui.py: NIfTI / GIFTI files
+h5py>=3.0            # MATLAB v7.3 mat-files
+statsmodels>=0.13    # only for preserve_df, decentralized_comcat.py and evaluation/
+matplotlib>=3.5      # only for the simulation tools
